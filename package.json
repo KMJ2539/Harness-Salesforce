@@ -14,7 +14,8 @@
   "scripts": {
     "test": "node bin/install.js --help",
     "test:harness": "npm --workspace harness test",
-    "typecheck:harness": "npm --workspace harness run typecheck"
+    "typecheck:harness": "npm --workspace harness run typecheck",
+    "prepublishOnly": "node bin/install.js --help && node bin/install.js list"
   },
   "workspaces": [
     "harness"
@@ -32,11 +33,16 @@
     "harness"
   ],
   "license": "MIT",
+  "author": "KMJ2539 <mjkang2539@gmail.com>",
+  "homepage": "https://github.com/KMJ2539/Harness-Salesforce#readme",
+  "bugs": {
+    "url": "https://github.com/KMJ2539/Harness-Salesforce/issues"
+  },
   "engines": {
     "node": ">=18"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/KMJ2539/Harness-Salesforce.git"
+    "url": "git+https://github.com/KMJ2539/Harness-Salesforce.git"
   }
 }
