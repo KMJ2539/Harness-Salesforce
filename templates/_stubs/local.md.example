@@ -1,0 +1,24 @@
+# local.md (개인 override)
+
+이 파일은 **gitignore되는 개인 설정** 레이어입니다.
+PROJECT.md를 덮어쓰는 항목만 적으세요. agent들이 PROJECT.md보다 먼저 Read합니다.
+
+이 파일을 사용하려면 `local.md.example`을 `local.md`로 복사하세요.
+
+---
+
+## 개인 작업 org
+
+(예시)
+- 기본 sandbox alias: `mydev`
+- production 작업 시 항상 dry-run 먼저.
+
+## 일시적 override
+
+(예시 — 검토 중인 정책 시도)
+- Sharing default를 `with sharing` 대신 `inherited sharing`으로 임시 변경 (이번 주 실험).
+
+## 개인 컨벤션
+
+(예시)
+- 디버그 로그 prefix: `[mz]` (코드 리뷰 전 제거 예정).

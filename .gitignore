@@ -1,0 +1,30 @@
+# Local Claude Code workspace (templates/ is the source of truth)
+.claude/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build & packaging artifacts
+*.tgz
+dist/
+build/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+
+# harness — local run logs (never commit, may contain redacted PII fallback)
+.harness-sf-runs/
+harness/coverage/
+harness/dist/

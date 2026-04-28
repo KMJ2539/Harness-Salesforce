@@ -1,0 +1,15 @@
+{
+  "intentionallyVulnerable": true,
+  "findings": [
+    {
+      "category": "apex.sharing_missing",
+      "severity": "high",
+      "locator": { "file": "UnsafeAccountSvc.cls", "symbol": "UnsafeAccountSvc" }
+    },
+    {
+      "category": "apex.dynamic_soql_unsafe",
+      "severity": "high",
+      "locator": { "file": "UnsafeAccountSvc.cls", "symbol": "search" }
+    }
+  ]
+}

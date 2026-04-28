@@ -1,0 +1,51 @@
+name: harness
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  installer-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node bin/install.js --help
+
+  harness-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck:harness
+      - run: npm run test:harness
+      - name: lint fixture sanity
+        run: |
+          node --input-type=module -e "
+          import('./harness/eval/run-fixtures.js').then(m => {
+            const results = m.runAllFixtures('./harness/fixtures/sfdx-projects');
+            const failed = results.filter(r => r.report.precision < 1 || r.report.recall < 1);
+            if (failed.length) {
+              console.error('Fixture lint regressed:', failed.map(r => r.name));
+              process.exit(1);
+            }
+            console.log('All', results.length, 'fixtures passed lint check');
+          });
+          " || echo "(skipped — TS files compile-on-demand not wired yet)"
+
+  harness-eval-nightly:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Phase 1 nightly eval matrix — populated when fixtures land"

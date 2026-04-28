@@ -1,0 +1,14 @@
+# Source-only files not needed by consumers
+.claude/
+.github/
+.git/
+.gitignore
+.editorconfig
+*.tgz
+node_modules/
+test/
+tests/
+__tests__/
+.vscode/
+.idea/
+.DS_Store

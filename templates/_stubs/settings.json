@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(sf org list:*)",
+      "Bash(sf org display:*)",
+      "Bash(sf org open:*)",
+      "Bash(sf config get:*)",
+      "Bash(sf apex run test:*)",
+      "Bash(sf apex get test:*)",
+      "Bash(sf apex list log:*)",
+      "Bash(sf apex tail log:*)",
+      "Bash(sf project deploy validate:*)",
+      "Bash(sf project deploy report:*)",
+      "Bash(sf project deploy preview:*)",
+      "Bash(sf project list ignored:*)",
+      "Bash(sf data query:*)",
+      "Bash(sf data get record:*)",
+      "Bash(sf package installed list:*)",
+      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-files:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/session-start-context.js" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/pre-write-path-guard.js" },
+          { "type": "command", "command": "node .claude/hooks/pre-modify-approval-gate.js" },
+          { "type": "command", "command": "node .claude/hooks/pre-create-design-link-gate.js" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/pre-deploy-gate.js" },
+          { "type": "command", "command": "node .claude/hooks/pre-library-install-gate.js" }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/stop-reviewer-validate.js" },
+          { "type": "command", "command": "node .claude/hooks/stop-analyzer-validate.js" }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node .claude/hooks/statusline.js",
+    "padding": 0
+  }
+}

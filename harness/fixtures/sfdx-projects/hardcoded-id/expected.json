@@ -1,0 +1,15 @@
+{
+  "intentionallyVulnerable": true,
+  "findings": [
+    {
+      "category": "apex.hardcoded_id",
+      "severity": "high",
+      "locator": { "file": "RecordTypeRouter.cls", "symbol": "RecordTypeRouter" }
+    },
+    {
+      "category": "apex.hardcoded_id",
+      "severity": "high",
+      "locator": { "file": "RecordTypeRouter.cls", "symbol": "RecordTypeRouter" }
+    }
+  ]
+}

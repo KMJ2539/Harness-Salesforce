@@ -1,0 +1,21 @@
+{
+  "name": "@harness-sf/harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "harness-sf 측정/검증 인프라 — installer 와 격리된 별도 패키지",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5",
+    "zod": "^3.23.8"
+  }
+}
