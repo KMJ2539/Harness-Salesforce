@@ -5,11 +5,17 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const readline = require('readline');
 const { spawnSync } = require('child_process');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const TEMPLATES_DIR = path.join(PKG_ROOT, 'templates');
+const PKG_VERSION = (() => {
+  try { return require(path.join(PKG_ROOT, 'package.json')).version; }
+  catch { return '0.0.0'; }
+})();
+const MANIFEST_NAME = '.harness-sf-manifest.json';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -35,6 +41,7 @@ USAGE
 COMMANDS
   init               Install agents and skills into ./.claude/ (project)
   init --global      Install into ~/.claude/ (user-wide)
+  update             Upgrade an existing install using manifest-based diff
   list               Show available agents and skills
   help               Show this message
 
@@ -52,6 +59,8 @@ EXAMPLES
   cd my-sf-project && npx harness-sf init
   npx harness-sf init --global
   npx harness-sf init --dry-run
+  npx harness-sf update
+  npx harness-sf update --dry-run
   npx harness-sf list
 `);
 }
@@ -370,6 +379,318 @@ async function ensureGitignoreEntries(cwd) {
   logEntry('overwritten', '.gitignore (appended # harness-sf block)');
 }
 
+// ---------------------------------------------------------------------------
+// Manifest layer — tracks per-file (sha256, templateSha256) so `update` can
+// classify each file as unchanged / upstream-only / user-only / conflict.
+// ---------------------------------------------------------------------------
+
+function sha256OfFile(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const buf = fs.readFileSync(filePath);
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+// Enumerate every (templateRelPath, destRelPath) pair the installer would copy.
+// destRelPath is relative to the .claude/ root.
+function enumerateTemplateFiles() {
+  const out = [];
+  for (const f of listMd(path.join(TEMPLATES_DIR, 'agents'))) {
+    out.push({ src: path.join('agents', f), dest: path.join('agents', f) });
+  }
+  for (const name of listSkillDirs(path.join(TEMPLATES_DIR, 'skills'))) {
+    out.push({
+      src: path.join('skills', name, 'SKILL.md'),
+      dest: path.join('skills', name, 'SKILL.md'),
+    });
+  }
+  for (const f of listMd(path.join(TEMPLATES_DIR, 'knowledge'))) {
+    out.push({ src: path.join('knowledge', f), dest: path.join('knowledge', f) });
+  }
+  for (const f of listJs(path.join(TEMPLATES_DIR, 'hooks'))) {
+    out.push({ src: path.join('hooks', f), dest: path.join('hooks', f) });
+  }
+  for (const f of listJs(path.join(TEMPLATES_DIR, 'hooks', '_lib'))) {
+    out.push({
+      src: path.join('hooks', '_lib', f),
+      dest: path.join('hooks', '_lib', f),
+    });
+  }
+  return out;
+}
+
+function readManifest(targetRoot) {
+  const p = path.join(targetRoot, MANIFEST_NAME);
+  if (!fs.existsSync(p)) return null;
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
+  catch { return null; }
+}
+
+function writeManifest(targetRoot, manifest) {
+  if (flags.dryRun) return;
+  const p = path.join(targetRoot, MANIFEST_NAME);
+  fs.mkdirSync(targetRoot, { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(manifest, null, 2) + '\n');
+}
+
+// Build a fresh manifest reflecting whatever is currently on disk + in templates.
+// Used after init() and after update() to record the new "post-op" state.
+function buildManifest(targetRoot, opts = {}) {
+  const now = new Date().toISOString();
+  const prior = readManifest(targetRoot);
+  const files = {};
+  for (const { src, dest } of enumerateTemplateFiles()) {
+    const tmplSha = sha256OfFile(path.join(TEMPLATES_DIR, src));
+    const destSha = sha256OfFile(path.join(targetRoot, dest));
+    if (!destSha) continue; // file not on disk (e.g. skipped by --*-only)
+    files[dest.split(path.sep).join('/')] = {
+      sha256: destSha,
+      templateSha256: tmplSha,
+      source: 'templates/' + src.split(path.sep).join('/'),
+    };
+  }
+  return {
+    version: PKG_VERSION,
+    installedAt: prior && prior.installedAt ? prior.installedAt : now,
+    updatedAt: now,
+    files,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// `update` — manifest-driven diff between installed .claude/ and current
+// templates/. Four buckets per file:
+//   unchanged       — user untouched, template untouched → no-op
+//   upstream-only   — user untouched, template changed   → silent overwrite
+//   user-only       — user modified, template untouched  → preserve
+//   conflict        — user modified, template changed    → interactive prompt
+// Plus deletions: in manifest, absent in templates/ → silent delete if
+// user-untouched, preserve+warn if user-modified.
+// ---------------------------------------------------------------------------
+
+async function update() {
+  if (flags.global) {
+    console.error('ERROR: update is project-local only (--global is not supported).');
+    process.exit(1);
+  }
+  const target = path.join(process.cwd(), '.claude');
+
+  console.log(`\nharness-sf update`);
+  console.log(`  source : ${TEMPLATES_DIR}`);
+  console.log(`  target : ${target}${flags.dryRun ? '  (dry run)' : ''}`);
+
+  if (!fs.existsSync(TEMPLATES_DIR)) {
+    console.error(`\nERROR: templates directory missing at ${TEMPLATES_DIR}`);
+    process.exit(1);
+  }
+  if (!fs.existsSync(target)) {
+    console.error(`\nERROR: ${target} does not exist. Run \`npx harness-sf init\` first.`);
+    process.exit(1);
+  }
+
+  let manifest = readManifest(target);
+  const legacy = !manifest;
+  if (legacy) {
+    console.log(`  ! no manifest found (legacy install) — assuming current files are unmodified`);
+    manifest = buildLegacyManifest(target);
+  }
+
+  const buckets = { unchanged: [], upstreamOnly: [], userOnly: [], conflict: [], missingOnDisk: [] };
+  const tmplFiles = enumerateTemplateFiles();
+  const tmplDestSet = new Set(tmplFiles.map(f => f.dest.split(path.sep).join('/')));
+
+  for (const { src, dest } of tmplFiles) {
+    const destKey = dest.split(path.sep).join('/');
+    const destPath = path.join(target, dest);
+    const srcPath = path.join(TEMPLATES_DIR, src);
+    const currentSha = sha256OfFile(destPath);
+    const newTmplSha = sha256OfFile(srcPath);
+    const recorded = manifest.files[destKey];
+
+    if (!currentSha) {
+      // Template exists but file missing on disk → treat as fresh add.
+      buckets.missingOnDisk.push({ src, dest, srcPath, destPath, newTmplSha });
+      continue;
+    }
+
+    const userModified = recorded ? currentSha !== recorded.sha256 : false;
+    const upstreamChanged = recorded ? newTmplSha !== recorded.templateSha256 : currentSha !== newTmplSha;
+
+    if (!userModified && !upstreamChanged) buckets.unchanged.push(destKey);
+    else if (!userModified && upstreamChanged) buckets.upstreamOnly.push({ src, dest, srcPath, destPath, newTmplSha });
+    else if (userModified && !upstreamChanged) buckets.userOnly.push(destKey);
+    else buckets.conflict.push({ src, dest, srcPath, destPath, newTmplSha, recorded, currentSha });
+  }
+
+  // Deletions: manifest entries no longer in templates/.
+  const deletions = [];
+  for (const destKey of Object.keys(manifest.files)) {
+    if (tmplDestSet.has(destKey)) continue;
+    const destPath = path.join(target, destKey);
+    if (!fs.existsSync(destPath)) continue;
+    const currentSha = sha256OfFile(destPath);
+    const recorded = manifest.files[destKey];
+    const userModified = currentSha !== recorded.sha256;
+    deletions.push({ destKey, destPath, userModified });
+  }
+
+  // Summary
+  console.log(`\nSummary`);
+  console.log(`  unchanged       : ${buckets.unchanged.length}`);
+  console.log(`  upstream-only   : ${buckets.upstreamOnly.length}  (will overwrite)`);
+  console.log(`  missing-on-disk : ${buckets.missingOnDisk.length}  (will create)`);
+  console.log(`  user-only       : ${buckets.userOnly.length}  (preserved)`);
+  console.log(`  conflicts       : ${buckets.conflict.length}  (will prompt)`);
+  console.log(`  deletions       : ${deletions.length}  (${deletions.filter(d => !d.userModified).length} auto, ${deletions.filter(d => d.userModified).length} kept+warn)`);
+
+  const tally = { created: 0, overwritten: 0, skipped: 0, deleted: 0, 'would-write': 0, 'would-delete': 0 };
+
+  // 1. Silent overwrites (upstream-only).
+  for (const item of buckets.upstreamOnly) {
+    await applyOverwrite(item, tally, 'upstream');
+  }
+
+  // 2. Missing on disk → create.
+  for (const item of buckets.missingOnDisk) {
+    await applyOverwrite(item, tally, 'add');
+  }
+
+  // 3. Conflicts — interactive (default N = preserve user file).
+  for (const item of buckets.conflict) {
+    await applyConflict(item, tally);
+  }
+
+  // 4. Deletions.
+  for (const d of deletions) {
+    if (d.userModified) {
+      console.log(`    ! kept  ${d.destKey}  (user-modified, deprecated upstream — review and remove manually)`);
+      tally.skipped++;
+      continue;
+    }
+    if (flags.dryRun) {
+      console.log(`    ? delete ${d.destKey}`);
+      tally['would-delete']++;
+    } else {
+      try { fs.unlinkSync(d.destPath); } catch {}
+      console.log(`    x ${d.destKey}`);
+      tally.deleted++;
+    }
+  }
+
+  // 5. settings.json safe-merge — re-run, idempotent.
+  await installSettings(target);
+
+  // 6. Refresh manifest.
+  if (!flags.dryRun) {
+    const fresh = buildManifest(target);
+    writeManifest(target, fresh);
+  }
+
+  console.log(`\nDone. created=${tally.created} overwritten=${tally.overwritten} deleted=${tally.deleted} skipped=${tally.skipped}` +
+              (flags.dryRun ? ` would-write=${tally['would-write']} would-delete=${tally['would-delete']}` : ''));
+
+  if (legacy && !flags.dryRun) {
+    console.log(`\n  ✓ manifest written — future updates will track per-file changes precisely`);
+  }
+
+  console.log(`\nNext steps:`);
+  console.log(`  - Restart Claude Code so it picks up the changes.\n`);
+}
+
+// Legacy migration: no manifest exists. Assume current disk files are
+// unmodified relative to whatever templates were installed before. We record
+// templateSha256 = currentSha so subsequent updates correctly detect both
+// user edits (vs current) and upstream changes (vs new templates/).
+function buildLegacyManifest(targetRoot) {
+  const now = new Date().toISOString();
+  const files = {};
+  for (const { dest } of enumerateTemplateFiles()) {
+    const destPath = path.join(targetRoot, dest);
+    const sha = sha256OfFile(destPath);
+    if (!sha) continue;
+    const key = dest.split(path.sep).join('/');
+    files[key] = { sha256: sha, templateSha256: sha, source: 'templates/' + dest.split(path.sep).join('/') };
+  }
+  return { version: 'legacy', installedAt: now, updatedAt: now, files };
+}
+
+async function applyOverwrite(item, tally, kind) {
+  const rel = item.dest.split(path.sep).join('/');
+  if (flags.dryRun) {
+    logEntry('would-write', `${rel} (${kind})`);
+    tally['would-write']++;
+    return;
+  }
+  fs.mkdirSync(path.dirname(item.destPath), { recursive: true });
+  fs.copyFileSync(item.srcPath, item.destPath);
+  if (process.platform !== 'win32' && rel.startsWith('hooks/')) {
+    try { fs.chmodSync(item.destPath, 0o755); } catch {}
+  }
+  const status = kind === 'add' ? 'created' : 'overwritten';
+  tally[status]++;
+  logEntry(status, `${rel} (${kind})`);
+}
+
+async function applyConflict(item, tally) {
+  const rel = item.dest.split(path.sep).join('/');
+  console.log(`\n  conflict: ${rel}`);
+  console.log(`    user-modified locally AND upstream template changed.`);
+
+  if (flags.force) {
+    if (flags.dryRun) { logEntry('would-write', `${rel} (conflict→force)`); tally['would-write']++; return; }
+    fs.copyFileSync(item.srcPath, item.destPath);
+    tally.overwritten++;
+    logEntry('overwritten', `${rel} (forced)`);
+    return;
+  }
+  if (flags.skipExisting) {
+    logEntry('skipped', `${rel} (skip-all)`);
+    tally.skipped++;
+    return;
+  }
+
+  const ans = await ask(`    overwrite? [y / N=keep / d=show diff / a=overwrite-all / s=skip-all]: `);
+  if (ans === 'd') {
+    showDiff(item.srcPath, item.destPath);
+    return applyConflict(item, tally); // re-prompt
+  }
+  if (ans === 'a') {
+    flags.force = true;
+    return applyConflict(item, tally);
+  }
+  if (ans === 's') {
+    flags.skipExisting = true;
+    logEntry('skipped', `${rel} (skip-all)`);
+    tally.skipped++;
+    return;
+  }
+  if (ans === 'y') {
+    if (flags.dryRun) { logEntry('would-write', `${rel} (conflict→y)`); tally['would-write']++; return; }
+    fs.copyFileSync(item.srcPath, item.destPath);
+    tally.overwritten++;
+    logEntry('overwritten', rel);
+    return;
+  }
+  // default: keep
+  logEntry('skipped', `${rel} (kept user version)`);
+  tally.skipped++;
+}
+
+// Minimal line-level diff for conflict review. Zero deps.
+function showDiff(srcPath, destPath) {
+  const a = fs.readFileSync(destPath, 'utf8').split(/\r?\n/);
+  const b = fs.readFileSync(srcPath, 'utf8').split(/\r?\n/);
+  const max = Math.max(a.length, b.length);
+  console.log(`    --- current (yours)`);
+  console.log(`    +++ upstream (new template)`);
+  let shown = 0;
+  for (let i = 0; i < max && shown < 60; i++) {
+    if (a[i] === b[i]) continue;
+    if (a[i] !== undefined) { console.log(`    -${a[i]}`); shown++; }
+    if (b[i] !== undefined) { console.log(`    +${b[i]}`); shown++; }
+  }
+  if (shown >= 60) console.log(`    ... (diff truncated at 60 lines)`);
+}
+
 async function init() {
   const target = flags.global
     ? path.join(os.homedir(), '.claude')
@@ -410,6 +731,14 @@ async function init() {
 
   console.log(`\nDone. created=${totals.created} overwritten=${totals.overwritten} skipped=${totals.skipped}` +
               (flags.dryRun ? ` would-write=${totals['would-write']}` : ''));
+
+  // Write manifest for future `update` runs. Project-local only — --global
+  // installs intentionally skip the manifest layer (no per-user tracking).
+  if (!flags.global && !flags.dryRun) {
+    const m = buildManifest(target);
+    writeManifest(target, m);
+    console.log(`  ✓ manifest: ${path.relative(process.cwd(), path.join(target, MANIFEST_NAME))}`);
+  }
 
   doctor();
 
@@ -481,6 +810,7 @@ function runQuiet(cmd, args) {
     if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') return help();
     if (cmd === 'list') return listContents();
     if (cmd === 'init') return await init();
+    if (cmd === 'update') return await update();
     console.error(`Unknown command: ${cmd}\n`);
     help();
     process.exit(1);

@@ -25,6 +25,28 @@ npx harness-sf init --global
 
 Restart Claude Code so it picks up `.claude/agents/`, `.claude/skills/`, and `.claude/hooks/`.
 
+### Upgrading an existing install
+
+Once installed, upgrade in place with:
+
+```bash
+npx harness-sf@latest update         # manifest-driven diff, prompts on conflict
+npx harness-sf@latest update --dry-run
+```
+
+The first `init` writes `.claude/.harness-sf-manifest.json` recording per-file sha256 of every shipped template + the local copy. `update` reads the manifest and classifies each file:
+
+| Bucket | Meaning | Action |
+|---|---|---|
+| `unchanged` | user untouched, template untouched | no-op |
+| `upstream-only` | user untouched, template changed | silent overwrite |
+| `user-only` | user modified, template untouched | preserved |
+| `conflict` | user modified, template changed | interactive prompt — default keeps your edit |
+
+Deleted templates (e.g. deprecated agents) are removed automatically when locally untouched, kept with a warning when locally modified. `settings.json` is safe-merged on every run (idempotent). Legacy installs without a manifest get a one-time, no-loss migration on first `update`.
+
+From inside Claude Code: `/sf-harness-update` is a thin UX wrapper that runs the dry-run preview, surfaces the change scope, and forwards conflict prompts to you.
+
 ## The flow — `/sf-feature`
 
 ```
@@ -77,6 +99,7 @@ Resume after session loss: dispatch state lives in `.harness-sf/.cache/dispatch-
 | Aura component (legacy reasons only — recommends LWC first) | `/sf-aura` directly |
 | Add an external library / managed package | `/sf-library-install` (or auto-invoked when design.md `## Decisions` records a library adoption) |
 | Production bug with stack trace | `/investigate` (4-phase root-cause loop) |
+| Upgrade harness-sf templates in this project | `/sf-harness-update` (or `npx harness-sf@latest update`) |
 
 The artifact skills are the same ones `/sf-feature` dispatches — they just run their own intent + design + review when called standalone. **Use them directly when the change is genuinely one artifact** (e.g. adding a single FLS guard to an existing handler, fixing a typo in an LWC label). The composite ceremony is overhead for atomic work.
 
@@ -117,6 +140,7 @@ End-to-end fixture you can step through: [`examples/sfdx-demo/WALKTHROUGH.md`](e
 | `/sf-sobject` | Custom object metadata, name field, sharing model, list view, optional tab | Full design-first flow | Delegated |
 | `/sf-field` | Custom field on any object — every type with impact analysis via `sf-context-explorer` | Full design-first flow | Delegated |
 | `/sf-library-install` | External library install across 5 methods (Managed/Unlocked Package, vendoring, submodule, npm, static resource) — plan + approval + verify + decisions log | Standalone install | Auto-invoked when design.md `## Decisions` records a library adoption |
+| `/sf-harness-update` | Upgrade installed harness-sf templates via manifest-driven diff. Thin wrapper over `npx harness-sf@latest update`. | Always | n/a |
 
 Every skill is **ensure-mode**: target exists → modify (with diff approval gate); absent → create. There is no separate "create" vs "modify" command.
 
@@ -197,6 +221,9 @@ npx harness-sf init --dry-run    # preview without writing
 npx harness-sf init --force      # overwrite existing without prompts
 npx harness-sf init --agents-only
 npx harness-sf init --skills-only
+npx harness-sf update            # upgrade existing .claude/ via manifest diff
+npx harness-sf update --dry-run  # preview the upgrade
+npx harness-sf update --force    # overwrite all conflicts (DESTRUCTIVE)
 npx harness-sf list              # show available agents and skills
 npx harness-sf help
 ```
