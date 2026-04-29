@@ -264,7 +264,7 @@ harness-sf/
 
 ## Contributing
 
-This is an early release (0.1.0). The intended evolution:
+This is an early release (0.1.1). The intended evolution:
 
 - Validate the current set against real SF projects, tune agent prompts.
 - Add a metadata index builder (`.sf-index/`) once usage patterns reveal which queries repeat.
