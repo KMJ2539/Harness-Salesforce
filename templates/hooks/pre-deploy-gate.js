@@ -75,11 +75,11 @@ function isDeployStart(cmd) {
   const cmd = payload.tool_input && payload.tool_input.command;
   if (!isDeployStart(cmd)) process.exit(0);
 
-  // PR D/E — scoped override + audit logging. Legacy SKIP_* removed.
+  // PR D/E + 1-time enforcement. Atomic decideBypass: logs and bypasses iff
+  // override valid AND not already used within the 1-hour session window.
   try {
-    const ovr = require('./_lib/override');
-    ovr.logIfActive('deploy', 'pre-deploy-gate');
-    if (ovr.isActive('deploy')) process.exit(0);
+    const { decideBypass } = require('./_lib/override');
+    if (decideBypass('deploy', 'pre-deploy-gate')) process.exit(0);
   } catch { /* fall through to normal gate */ }
 
   // PR C2/C3 — prefer canonical state.deploy.last_validation (fingerprint).

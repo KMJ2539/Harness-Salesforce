@@ -64,11 +64,9 @@ function keyForIdentifier(method, identifier) {
 }
 
 (function main() {
-  // PR D/E — scoped override + audit logging. Legacy SKIP_* removed.
   try {
-    const ovr = require('./_lib/override');
-    ovr.logIfActive('library', 'pre-library-install-gate');
-    if (ovr.isActive('library')) process.exit(0);
+    const { decideBypass } = require('./_lib/override');
+    if (decideBypass('library', 'pre-library-install-gate')) process.exit(0);
   } catch { /* fall through to normal gate */ }
 
   const raw = readStdin();

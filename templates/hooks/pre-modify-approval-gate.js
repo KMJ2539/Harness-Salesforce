@@ -38,11 +38,9 @@ function inForceApp(rel) {
 }
 
 (function main() {
-  // PR D/E — scoped override + audit logging. Legacy SKIP_* removed.
   try {
-    const ovr = require('./_lib/override');
-    ovr.logIfActive('modify', 'pre-modify-approval-gate');
-    if (ovr.isActive('modify')) process.exit(0);
+    const { decideBypass } = require('./_lib/override');
+    if (decideBypass('modify', 'pre-modify-approval-gate')) process.exit(0);
   } catch { /* fall through to normal gate */ }
 
   const raw = readStdin();

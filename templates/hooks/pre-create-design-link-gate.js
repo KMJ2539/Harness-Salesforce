@@ -54,11 +54,9 @@ function findFreshDesignSentinel() {
 }
 
 (function main() {
-  // PR D/E — scoped override + audit logging. Legacy SKIP_* removed.
   try {
-    const ovr = require('./_lib/override');
-    ovr.logIfActive('create', 'pre-create-design-link-gate');
-    if (ovr.isActive('create')) process.exit(0);
+    const { decideBypass } = require('./_lib/override');
+    if (decideBypass('create', 'pre-create-design-link-gate')) process.exit(0);
   } catch { /* fall through to normal gate */ }
 
   const raw = readStdin();

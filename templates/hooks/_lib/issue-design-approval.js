@@ -77,9 +77,8 @@ if (!name) {
 // Skip via HARNESS_SF_OVERRIDE='design:<reason>' (PR D/E). Legacy SKIP_* removed.
 let skipResolution = false;
 try {
-  const ovr = require('./override');
-  ovr.logIfActive('design', 'issue-design-approval');
-  if (ovr.isActive('design')) skipResolution = true;
+  const { decideBypass } = require('./override');
+  if (decideBypass('design', 'issue-design-approval')) skipResolution = true;
 } catch { /* fall through */ }
 if (!skipResolution) {
   const validator = path.join(__dirname, 'validate-design.js');

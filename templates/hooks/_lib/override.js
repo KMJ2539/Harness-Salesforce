@@ -16,6 +16,7 @@
 const audit = require('./audit');
 
 const VALID_SCOPES = new Set(['create', 'modify', 'design', 'deploy', 'library', 'all']);
+const ONE_TIME_TTL_MS = 60 * 60 * 1000; // session boundary heuristic — 1 hour
 
 const REMOVED_LEGACY_VARS = [
   'HARNESS_SF_SKIP_CREATE_GATE',
@@ -59,13 +60,29 @@ function parseOverride() {
   return { scope, reason };
 }
 
+// 1-time enforcement (codex H2): one override per ONE_TIME_TTL_MS window.
+// Pessimistic on shared machines (any audit entry counts); correct for the
+// single-user / per-session-shell common case.
+function priorOverrideExists(excludeSelfSha) {
+  let recent;
+  try { recent = audit.tail(50); }
+  catch { return false; }
+  const now = Date.now();
+  for (const e of recent) {
+    if (excludeSelfSha && e.sha === excludeSelfSha) continue;
+    const t = new Date(e.ts).getTime();
+    if (Number.isFinite(t) && now - t < ONE_TIME_TTL_MS) return true;
+  }
+  return false;
+}
+
+let _exhaustedWarned = false;
 function isActive(targetScope) {
   warnLegacyIfPresent();
   const ovr = parseOverride();
-  if (ovr && !ovr.error) {
-    return ovr.scope === 'all' || ovr.scope === targetScope;
-  }
-  return false;
+  if (!ovr || ovr.error) return false;
+  if (ovr.scope !== 'all' && ovr.scope !== targetScope) return false;
+  return true;
 }
 
 // Returns null if no override active. Returns { scope, reason } describing what's in effect.
@@ -75,16 +92,36 @@ function describe() {
   return null;
 }
 
-// Logs once per process per (gate, scope). Returns the entry written, or null if no override.
-function logIfActive(targetScope, gate, opts = {}) {
-  if (!isActive(targetScope)) return null;
+// decideBypass — single atomic call gates should use. Replaces the
+// logIfActive + isActive pair to avoid the self-reference race where
+// logIfActive's own audit append makes isActive's prior-use check trip.
+//
+// Returns true if the gate should bypass (override is valid + 1-time check
+// passes). Logs to audit only on the first granted bypass per process.
+function decideBypass(targetScope, gate, opts = {}) {
+  if (!isActive(targetScope)) return false;
+
   const desc = describe();
-  if (!desc) return null;
-  const key = `${gate}|${desc.scope}`;
-  if (_logged.has(key)) return null;
-  _logged.add(key);
+  if (!desc) return false;
+
+  const processKey = `${gate}|${desc.scope}`;
+  if (_logged.has(processKey)) return true; // already decided + logged this process
+
+  if (priorOverrideExists()) {
+    if (!_exhaustedWarned) {
+      _exhaustedWarned = true;
+      process.stderr.write(
+        `[harness-sf] HARNESS_SF_OVERRIDE already used within ${Math.floor(ONE_TIME_TTL_MS / 60000)}m. ` +
+        `1-time enforcement: only one override allowed per session window. ` +
+        `Restart the session (or wait for window to expire) to reset.\n`
+      );
+    }
+    return false;
+  }
+
+  _logged.add(processKey);
   try {
-    return audit.append({
+    audit.append({
       gate,
       slug: opts.slug || '',
       scope: desc.scope,
@@ -93,8 +130,16 @@ function logIfActive(targetScope, gate, opts = {}) {
     });
   } catch (e) {
     process.stderr.write(`[harness-sf] override audit failed: ${e.message}\n`);
-    return null;
+    return false;
   }
+  return true;
 }
 
-module.exports = { isActive, describe, logIfActive, VALID_SCOPES };
+// Back-compat shim — same surface as before, but now the act of logging is
+// atomic with the bypass decision via decideBypass. Existing callers that
+// only use logIfActive (without checking isActive afterward) still work.
+function logIfActive(targetScope, gate, opts = {}) {
+  return decideBypass(targetScope, gate, opts) ? { logged: true } : null;
+}
+
+module.exports = { isActive, describe, decideBypass, logIfActive, VALID_SCOPES };
