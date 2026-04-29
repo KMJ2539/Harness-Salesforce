@@ -1,6 +1,6 @@
 {
   "name": "harness-sf",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Salesforce engineering harness for Claude Code — production-grade subagents and skills for Apex, Flow, LWC, Aura, and metadata workflows.",
   "bin": {
     "harness-sf": "bin/install.js"
