@@ -11,8 +11,31 @@ const fs = require('fs');
 const path = require('path');
 const sentinel = require('./_lib/sentinel');
 
+// PR C2 — fingerprint-aware deploy gate. Reads new state.deploy.last_validation
+// when present and validates via fingerprint. Falls back to legacy
+// .harness-sf/last-validation.json with head_sha matching.
+let fingerprintLib;
+try { fingerprintLib = require('./_lib/state/fingerprint'); } catch { fingerprintLib = null; }
+
 const TTL_MS = 30 * 60 * 1000;
 const DEFAULT_COVERAGE_TARGET = 75;
+
+function newestStateWithDeployValidation() {
+  const dir = path.join(process.cwd(), '.harness-sf', 'state');
+  if (!fs.existsSync(dir)) return null;
+  const files = fs.readdirSync(dir)
+    .filter(f => /^[a-z0-9-]+__r\d+\.json$/.test(f))
+    .map(f => ({ f, m: fs.statSync(path.join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.m - a.m);
+  for (const { f } of files) {
+    let s;
+    try { s = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { continue; }
+    if (s && s.deploy && s.deploy.last_validation && s.deploy.last_validation.fingerprint) {
+      return { state: s, file: f };
+    }
+  }
+  return null;
+}
 
 function resolveCoverageTarget() {
   const envVal = process.env.HARNESS_SF_COVERAGE_TARGET;
@@ -54,24 +77,41 @@ function isDeployStart(cmd) {
 
   if (process.env.HARNESS_SF_SKIP_DEPLOY_GATE === '1') process.exit(0);
 
-  const valPath = path.join(process.cwd(), '.harness-sf', 'last-validation.json');
-  if (!fs.existsSync(valPath)) {
-    deny(`deploy gate: no .harness-sf/last-validation.json found. Run /sf-deploy-validator first.`);
+  // PR C2 — prefer canonical state.deploy.last_validation when present.
+  let val = null;
+  let valSource = null;
+  const newest = newestStateWithDeployValidation();
+  if (newest) {
+    const lv = newest.state.deploy.last_validation;
+    val = {
+      validation_result: lv.result === 'pass' ? 'Succeeded' : (lv.result || 'unknown'),
+      validated_at: lv.at,
+      coverage_overall: lv.coverage_overall,
+      // synthesize a sentinel-compatible shape with fingerprint instead of head_sha.
+      fingerprint: lv.fingerprint,
+    };
+    valSource = `state:${newest.file}`;
+  } else {
+    const valPath = path.join(process.cwd(), '.harness-sf', 'last-validation.json');
+    if (!fs.existsSync(valPath)) {
+      deny(`deploy gate: no canonical state.deploy.last_validation and no .harness-sf/last-validation.json found. Run /sf-deploy-validator first.`);
+    }
+    try { val = JSON.parse(fs.readFileSync(valPath, 'utf8')); }
+    catch (e) { deny(`deploy gate: last-validation.json unreadable (${e.message}). Re-run /sf-deploy-validator.`); }
+    valSource = 'legacy:last-validation.json';
   }
-
-  let val;
-  try { val = JSON.parse(fs.readFileSync(valPath, 'utf8')); }
-  catch (e) { deny(`deploy gate: last-validation.json unreadable (${e.message}). Re-run /sf-deploy-validator.`); }
 
   if (val.validation_result !== 'Succeeded') {
-    deny(`deploy gate: last validation_result='${val.validation_result || 'unknown'}'. Fix issues and re-run /sf-deploy-validator.`);
+    deny(`deploy gate: last validation_result='${val.validation_result || 'unknown'}' (${valSource}). Fix issues and re-run /sf-deploy-validator.`);
   }
 
-  // validated_at is the deploy-gate field name; map to the shared sentinel shape.
-  const shaped = { issued_at: val.validated_at, head_sha: val.head_sha };
+  // Build sentinel-compatible shape. New shape uses fingerprint; legacy uses head_sha.
+  const shaped = { issued_at: val.validated_at };
+  if (val.fingerprint) shaped.fingerprint = val.fingerprint;
+  else shaped.head_sha = val.head_sha;
   const v = sentinel.validate(shaped, TTL_MS);
   if (!v.ok) {
-    deny(`deploy gate: ${v.reason}. Re-run /sf-deploy-validator.`);
+    deny(`deploy gate: ${v.reason} (${valSource}). Re-run /sf-deploy-validator.`);
   }
 
   const target = resolveCoverageTarget();

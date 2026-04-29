@@ -87,7 +87,26 @@ if (process.env.HARNESS_SF_SKIP_RESOLUTION_GATE !== '1') {
   }
 }
 
+// PR C2 — pass slug + design_revision so sentinel.writeSentinel captures
+// fingerprint + state_version alongside head_sha. slug derived from name.
+const slug = name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+const designRevision = parseInt(fm.revision || '1', 10) || 1;
+
+// Body hash for binding (PR C3 will make this required; PR C1/C2 captures opportunistically).
+let bodyHashStr = null;
+try {
+  const { bodyHash } = require('./state/body-hash');
+  bodyHashStr = bodyHash(text);
+} catch { /* state/body-hash not available — older harness install */ }
+
 const key = sentinel.keyFromPath(abs);
-const data = sentinel.writeSentinel('design-approvals', key, { design_path: rel, type, name });
-process.stdout.write(`approved DESIGN: ${rel} (type=${type}, name=${name}, head=${(data.head_sha || 'no-git').slice(0, 7)}, expires in 2h)\n`);
+const extras = { design_path: rel, type, name };
+if (slug) extras.slug = slug;
+if (designRevision) extras.design_revision = designRevision;
+if (bodyHashStr) extras.design_body_hash = bodyHashStr;
+const data = sentinel.writeSentinel('design-approvals', key, extras);
+const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…`
+                                : `head=${(data.head_sha || 'no-git').slice(0, 7)}`;
+const sv = data.state_version != null ? ` state_v=${data.state_version}` : '';
+process.stdout.write(`approved DESIGN: ${rel} (type=${type}, name=${name}, ${fpDesc}${sv}, expires in 2h)\n`);
 process.exit(0);

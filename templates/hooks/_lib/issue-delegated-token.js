@@ -82,14 +82,23 @@ if (!artifact) fail(`artifact '${artifactId}' not found in ${rel} (need '### N. 
 const subSkill = TYPE_TO_SKILL[artifact.type] || null;
 if (!subSkill) fail(`artifact type '${artifact.type}' has no dispatch skill (supported: ${Object.keys(TYPE_TO_SKILL).join(', ')})`);
 
+// PR C2 — populate slug + design_revision so sentinel captures fingerprint + state_version.
+const slug = (fm.name || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+const designRevision = parseInt(fm.revision || '1', 10) || 1;
+
 const tokenInput = `${rel}#${artifactId}`;
 const key = crypto.createHash('sha1').update(tokenInput).digest('hex').slice(0, 16);
-const data = sentinel.writeSentinel('delegated-mode', key, {
+const extras = {
   design_path: rel,
   artifact_id: artifactId,
   type: artifact.type,
   sub_skill: subSkill,
-});
+};
+if (slug) extras.slug = slug;
+if (designRevision) extras.design_revision = designRevision;
+const data = sentinel.writeSentinel('delegated-mode', key, extras);
 
-process.stdout.write(`delegated-token: ${rel}#${artifactId} → ${subSkill} (key=${key}, head=${(data.head_sha || 'no-git').slice(0, 7)})\n`);
+const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…`
+                                : `head=${(data.head_sha || 'no-git').slice(0, 7)}`;
+process.stdout.write(`delegated-token: ${rel}#${artifactId} → ${subSkill} (key=${key}, ${fpDesc})\n`);
 process.exit(0);
