@@ -1,14 +1,14 @@
-# Fixture 추가 절차
+# Fixture-addition procedure
 
-incident 발생 또는 새 anti-pattern 발견 시:
+When an incident occurs or a new anti-pattern is discovered:
 
-1. `sfdx-projects/{name}/` 디렉터리 생성. `sfdx-project.json`, `force-app/main/default/...` 최소 구조.
-2. 취약 코드 fixture 라면 `expected.json` 에 `"intentionallyVulnerable": true` 박제 + 모든 Apex 파일 상단에 표준 헤더 주석:
+1. Create the `sfdx-projects/{name}/` directory. Minimal structure: `sfdx-project.json`, `force-app/main/default/...`.
+2. For a vulnerable-code fixture, set `"intentionallyVulnerable": true` in `expected.json` and add the standard header comment at the top of every Apex file:
    ```
    // INTENTIONALLY VULNERABLE — harness-sf test fixture only.
    // NOT for deployment. See expected.json `intentionallyVulnerable: true`.
    ```
-3. SF ID literal 은 가짜 형식 사용: `001FIXTURE000000001`, `012FIXTURE000000002`.
-4. `expected.json` 의 `findings[].category` 는 `harness/contracts/expected.ts` 의 closed enum 만 사용. 새 카테고리 필요 시 별도 PR 로 enum 확장.
-5. `README.md` 1~2 문단 — 의도와 expected findings 의 근거.
-6. 보안 스캐너 제외 규칙: repo 루트 `.gitleaks.toml`/`.trufflehog.yml` 가 `harness/fixtures/**` 를 제외하는지 확인.
+3. Use the fake format for SF ID literals: `001FIXTURE000000001`, `012FIXTURE000000002`.
+4. The `findings[].category` values in `expected.json` must use only the closed enum from `harness/contracts/expected.ts`. To add a new category, expand the enum in a separate PR.
+5. `README.md`: 1–2 paragraphs — intent and rationale for the expected findings.
+6. Security-scanner exclusion: confirm that the repo root `.gitleaks.toml` / `.trufflehog.yml` excludes `harness/fixtures/**`.

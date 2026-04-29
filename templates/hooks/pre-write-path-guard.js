@@ -67,7 +67,7 @@ const PROFILE_PATH_RE = /(^|\/)force-app\/.+\/profiles\/.+\.profile-meta\.xml$/;
 
   if (filePath && PROFILE_PATH_RE.test(relativize(filePath))) {
     if (process.env.HARNESS_SF_ALLOW_PROFILE_EDIT !== '1') {
-      deny(`Profile 편집 금지 — Permission Set으로 대체하세요. 우회: HARNESS_SF_ALLOW_PROFILE_EDIT=1. (path: ${filePath})`);
+      deny(`Profile edits are forbidden — use a Permission Set instead. Escape hatch: HARNESS_SF_ALLOW_PROFILE_EDIT=1. (path: ${filePath})`);
     }
   }
 

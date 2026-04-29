@@ -1,33 +1,33 @@
-# harness/ — 측정·검증 인프라
+# harness/ — measurement & verification infrastructure
 
-`harness-sf` 의 zero-dep installer 와 격리된 별도 npm 패키지. eval/snapshot/lint/observability/replay 인프라.
+A separate npm package isolated from `harness-sf`'s zero-dep installer. Provides eval / snapshot / lint / observability / replay infrastructure.
 
-설계 문서: `.harness-sf/designs/2026-04-28-harness-hardening.md`
+Design doc: `.harness-sf/designs/2026-04-28-harness-hardening.md`
 
-## 디렉터리
+## Directories
 
 ```
 harness/
-├── contracts/        # Phase 0 — AgentRunner / decisions / run-log / expected / failure-class / normalize 계약
-├── runner/           # AgentRunner 구현 (mock + SDK adapter)
+├── contracts/        # Phase 0 — AgentRunner / decisions / run-log / expected / failure-class / normalize contracts
+├── runner/           # AgentRunner implementations (mock + SDK adapter)
 ├── fixtures/         # Phase 1 — sfdx-projects starter set
-├── eval/             # Phase 1 — score, snapshot 비교
+├── eval/             # Phase 1 — score, snapshot comparison
 ├── lint/             # Phase 3 — apex-rules, lwc-rules, vendored PMD
 ├── observability/    # Phase 4 — aggregate, dashboard
 └── replay/           # Phase 5 — replay, bisect
 ```
 
-## 명령
+## Commands
 
 ```bash
-npm install              # root 에서, workspaces 가 harness deps 도 설치
+npm install              # from root; workspaces installs harness deps too
 npm run test:harness     # vitest
 npm run typecheck:harness
 ```
 
-## 원칙
+## Principles
 
-- `templates/` 는 read-only — 이 패키지는 읽지만 수정하지 않는다.
-- `bin/install.js` 의 zero-dep 원칙은 별개 — 이 패키지는 dep 자유.
-- 모든 run log 쓰기는 `runner/redact.ts` 통과 필수 (보안).
-- Phase 0 의 6개 계약은 후행 phase 의 단일 진실의 원천.
+- `templates/` is read-only — this package reads but never modifies it.
+- The zero-dep principle of `bin/install.js` is independent — this package is free to use deps.
+- Every run-log write must pass through `runner/redact.ts` (security).
+- The 6 Phase 0 contracts are the single source of truth for all downstream phases.

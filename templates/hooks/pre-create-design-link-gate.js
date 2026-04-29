@@ -80,8 +80,8 @@ function findFreshDesignSentinel() {
   if (!s) {
     deny(
       `create gate: '${rel}' is a new file but no fresh design approval sentinel found.\n` +
-      `  design-first 흐름: /sf-apex, /sf-lwc, /sf-sobject, /sf-feature 중 하나로 진입하여\n` +
-      `  Step 1.9 (5-persona 리뷰 승인) 까지 완료하면 자동으로 발급됩니다.\n` +
+      `  design-first flow: enter via /sf-apex, /sf-lwc, /sf-sobject, or /sf-feature and\n` +
+      `  complete through Step 1.9 (5-persona review approval) — sentinel is issued automatically.\n` +
       `  Manual: node .claude/hooks/_lib/issue-design-approval.js .harness-sf/designs/{your-design}.md\n` +
       `  Escape hatch: HARNESS_SF_SKIP_CREATE_GATE=1`
     );

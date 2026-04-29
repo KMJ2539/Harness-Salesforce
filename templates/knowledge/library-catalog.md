@@ -1,93 +1,93 @@
 # Library Catalog
 
-`sf-design-library-reviewer` 가 design.md 검토 시 **반드시 Read** 하는 패턴 카탈로그.
-"design 에 X 패턴이 있고 인벤토리에 Y 가 없으면 → 카테고리 권고 강제" 의 if-then 룰 모음.
+Pattern catalog that `sf-design-library-reviewer` **must Read** when reviewing a design.md.
+A set of if-then rules: "if pattern X is in the design and Y is not in the inventory → category recommendation enforced."
 
-이 파일의 역할은 **카테고리 권고 의무화**. 구체 라이브러리명은 카테고리 안의 "대표 후보" 로만 거론하고, 사용자가 직접 04t/git URL/npm명을 확정한 뒤 `/sf-library-install` 로 도입한다 (Iron Law — 환각 금지).
-
----
-
-## 사용 방법 (reviewer 측)
-
-Step 3 rubric 적용 시 본 카탈로그의 각 항목을 순회:
-
-1. `trigger-when` 조건이 design.md 와 매칭되는가?
-2. 매칭되면 인벤토리에 `inventory-marker` 흔적이 있는가?
-3. 흔적 없음 → **`Category Recommendations` 에 해당 카테고리 권고 1줄 + `Library Verdict` 에 해당 artifact 를 `library-recommended: <category>` 로 기록 강제**.
-4. 흔적 있음 → `Reuse Opportunities` 에 "이미 도입됨, reuse" + `Library Verdict` 에 `library-applied: <name>` 기록.
-5. trigger-when 자체가 매칭 안 됨 → `Library Verdict` 에 `library-not-applicable: <reason>` 기록.
-
-`Library Verdict` 섹션은 모든 artifact 가 셋 중 하나로 분류되어야 한다 — "검토 안 함" 상태가 design.md 에 남는 것을 막는다 (validate-design.js `--check-library-verdict` 가 차단).
+This file's role is to **mandate category-level recommendations**. Specific library names are mentioned only as "representative candidates" within a category; the user themselves confirms the 04t/git URL/npm name and then introduces it via `/sf-library-install` (Iron Law — no hallucination).
 
 ---
 
-## 패턴 목록
+## Usage (reviewer side)
+
+When applying the Step 3 rubric, walk through each entry in this catalog:
+
+1. Does the `trigger-when` condition match the design.md?
+2. If matched, is there an `inventory-marker` trace in the inventory?
+3. No trace → **add 1-line category recommendation in `Category Recommendations` + record this artifact as `library-recommended: <category>` in `Library Verdict` (mandatory)**.
+4. Trace present → record "already adopted, reuse" in `Reuse Opportunities` + `library-applied: <name>` in `Library Verdict`.
+5. trigger-when itself doesn't match → record `library-not-applicable: <reason>` in `Library Verdict`.
+
+The `Library Verdict` section requires every artifact to be classified into one of these three states — it prevents a "not reviewed" status from remaining in design.md (validate-design.js `--check-library-verdict` blocks it).
+
+---
+
+## Pattern list
 
 ### 1. trigger-framework
 
-- **trigger-when**: design.md `## Artifacts` 에 `[type: apex]` 이고 subtype 이 `trigger`, `trigger-handler`, `trigger+handler` 중 하나인 artifact 가 1개 이상 존재.
-- **inventory-marker**: 다음 중 하나라도 있으면 "도입됨".
-  - `force-app/**/classes/TriggerHandler.cls` (kevinohara80 패턴)
+- **trigger-when**: design.md `## Artifacts` contains at least one artifact with `[type: apex]` whose subtype is one of `trigger`, `trigger-handler`, `trigger+handler`.
+- **inventory-marker**: any of the following counts as "adopted":
+  - `force-app/**/classes/TriggerHandler.cls` (kevinohara80 pattern)
   - `force-app/**/classes/fflib_SObjectDomain.cls` (fflib)
   - `force-app/**/classes/sfab_*.cls` (sfab)
-  - `.harness-sf/decisions.md` 에 `trigger-framework` 카테고리 도입 기록
-- **대표 후보** (구체명 거론은 인벤토리 있을 때만, 없을 때는 카테고리만):
-  - kevinohara80/sfdc-trigger-framework — 학습 비용 낮음, 단일 책임. 소규모/중간 규모 권장 default.
-  - fflib-apex-common (Apex Enterprise Patterns) — Domain/Selector/Service 풀 스택. 대규모 + 패턴 정합성 중시 시.
-  - sfab — context dispatch + before/after override 가벼운 베이스.
-- **권고 사유 (디폴트 문구)**: "객체당 트리거 1개 + before/after 분기 + recursion guard + bypass 패턴은 trigger framework 카테고리 표준 해법. 자체 static 클래스로 시작하면 두 번째 트리거 도입 시 패턴 분기 비용 누적."
+  - Adoption record for the `trigger-framework` category in `.harness-sf/decisions.md`
+- **Representative candidates** (only mention specific names when inventory is present; otherwise category only):
+  - kevinohara80/sfdc-trigger-framework — low learning cost, single responsibility. Default for small/mid-size projects.
+  - fflib-apex-common (Apex Enterprise Patterns) — full Domain/Selector/Service stack. For large scale + when pattern consistency matters.
+  - sfab — lightweight base for context dispatch + before/after override.
+- **Recommendation rationale (default wording)**: "One trigger per object + before/after branching + recursion guard + bypass pattern is the standard solution for the trigger framework category. If you start with your own static class, the cost of branching the pattern accumulates when introducing a second trigger."
 
 ### 2. selector-pattern
 
-- **trigger-when**: design.md 에 `[type: apex]` artifact 중 SOQL 을 직접 작성하는 service/handler 가 2개 이상이거나, 동일 객체에 대한 SOQL 이 design 안에 3회 이상 등장.
-- **inventory-marker**: `force-app/**/classes/*Selector.cls`, `force-app/**/classes/fflib_SObjectSelector.cls`, decisions.md 에 `selector-pattern` 기록.
-- **대표 후보**:
-  - fflib_SObjectSelector — Apex Enterprise Patterns selector 베이스.
-  - 자체 mini-selector (간단 케이스).
-- **권고 사유**: "SOQL 분산 시 FLS/sharing 일관성 검증 비용 + 필드 추가 시 N개 클래스 동시 수정 비용. Selector 1개로 집중 시 변경 비용 O(1)."
+- **trigger-when**: design.md has 2+ `[type: apex]` artifacts as service/handler that author SOQL directly, or SOQL against the same object appears 3+ times in the design.
+- **inventory-marker**: `force-app/**/classes/*Selector.cls`, `force-app/**/classes/fflib_SObjectSelector.cls`, `selector-pattern` record in decisions.md.
+- **Representative candidates**:
+  - fflib_SObjectSelector — selector base from Apex Enterprise Patterns.
+  - Custom mini-selector (simple cases).
+- **Recommendation rationale**: "Scattered SOQL increases the cost of verifying FLS/sharing consistency + cost of editing N classes simultaneously when adding fields. Concentrating into one Selector keeps change cost at O(1)."
 
 ### 3. unit-of-work
 
-- **trigger-when**: design.md 에 `[type: apex]` artifact 중 단일 트랜잭션에서 3개 이상 sObject 를 insert/update 하거나, 부모-자식 관계의 동시 insert (parent → external Id → child) 가 명시됨.
-- **inventory-marker**: `fflib_SObjectUnitOfWork.cls`, decisions.md 에 `unit-of-work` 기록.
-- **대표 후보**:
-  - fflib_SObjectUnitOfWork — DML 묶기 + 의존성 자동 해소.
-- **권고 사유**: "수동 DML 순서 관리는 cross-object dependency 누락 사고 + DML 횟수 governor 위반의 최다 원인. UoW 가 commit 시점에 의존성 해소."
+- **trigger-when**: design.md has `[type: apex]` artifacts that insert/update 3+ sObjects in a single transaction, or specify simultaneous insert of parent-child relationships (parent → external Id → child).
+- **inventory-marker**: `fflib_SObjectUnitOfWork.cls`, `unit-of-work` record in decisions.md.
+- **Representative candidates**:
+  - fflib_SObjectUnitOfWork — DML batching + automatic dependency resolution.
+- **Recommendation rationale**: "Manual DML ordering is the leading cause of cross-object dependency omissions + DML count governor violations. UoW resolves dependencies at commit time."
 
 ### 4. http-callout-mock
 
-- **trigger-when**: design.md 에 `Database.AllowsCallouts` 또는 `HttpRequest` 또는 외부 API 연동이 명시되고, Test Strategy 가 `HttpCalloutMock` 직접 구현을 가정.
-- **inventory-marker**: `force-app/**/classes/*HttpMock*.cls`, `force-app/**/classes/*MultiMock*.cls`, decisions.md 에 `http-callout-mock` 기록.
-- **대표 후보**:
-  - financialforcedev/MultiRequestMock 패턴 — endpoint 별 분기 mock.
-  - 자체 enum-based mock factory.
-- **권고 사유**: "엔드포인트별 분기 mock 을 매 테스트에서 직접 구현하면 retry/error/timeout 시나리오마다 N×M 케이스 boilerplate. 재사용 가능한 mock factory 한 번 도입이 장기적으로 유리."
+- **trigger-when**: design.md specifies `Database.AllowsCallouts` or `HttpRequest` or external API integration, and the Test Strategy assumes a hand-rolled `HttpCalloutMock` implementation.
+- **inventory-marker**: `force-app/**/classes/*HttpMock*.cls`, `force-app/**/classes/*MultiMock*.cls`, `http-callout-mock` record in decisions.md.
+- **Representative candidates**:
+  - financialforcedev/MultiRequestMock pattern — per-endpoint branching mock.
+  - Custom enum-based mock factory.
+- **Recommendation rationale**: "Hand-rolling per-endpoint branching mocks in every test produces N×M boilerplate per retry/error/timeout scenario. Introducing a reusable mock factory once pays off long term."
 
 ### 5. test-data-factory
 
-- **trigger-when**: design.md `## Artifacts` 에 `[type: apex]` `[subtype: test]` artifact 가 있고, TestSetup 으로 만들어야 할 sObject 종류가 3개 이상 (예: Account + Contact + Order + OrderItem).
-- **inventory-marker**: `force-app/**/classes/TestDataFactory.cls`, `force-app/**/classes/*TestUtil.cls`, decisions.md 에 `test-data-factory` 기록.
-- **대표 후보**:
-  - 자체 TestDataFactory 패턴 (정적 메서드 / fluent builder).
+- **trigger-when**: design.md `## Artifacts` has a `[type: apex]` `[subtype: test]` artifact and TestSetup must produce 3+ sObject types (e.g. Account + Contact + Order + OrderItem).
+- **inventory-marker**: `force-app/**/classes/TestDataFactory.cls`, `force-app/**/classes/*TestUtil.cls`, `test-data-factory` record in decisions.md.
+- **Representative candidates**:
+  - Custom TestDataFactory pattern (static methods / fluent builder).
   - sfdx-falcon test-utils.
-- **권고 사유**: "테스트 데이터 셋업이 클래스마다 흩어지면 required 필드 추가 시 N개 테스트 동시 깨짐. Factory 1개에 집중 시 변경 비용 O(1)."
+- **Recommendation rationale**: "When test data setup is scattered across classes, adding a required field breaks N tests at once. Concentrating into one Factory keeps change cost at O(1)."
 
 ### 6. structured-logging
 
-- **trigger-when**: design.md 에 batch / queueable / schedulable / @RestResource / 외부 callout 진입점이 있고, PROJECT.md `logging` 섹션이 채워져 있지 않음 (또는 `System.debug` 직접 사용 명시).
-- **inventory-marker**: Nebula Logger namespace `nebc__*`, `force-app/**/classes/Logger.cls` (자체), `force-app/**/classes/IF_Log*.cls`, decisions.md 에 `structured-logging` 기록, **또는** PROJECT.md `logging.log_sobject` 가 명시됨 (자체 컨벤션 수립됨으로 간주).
-- **대표 후보**:
-  - jongpie/NebulaLogger — Salesforce 진영 표준 OSS 로거.
-  - 자체 log sObject + IF_Logger 패턴.
-- **권고 사유**: "운영 사고 시 'who/when/which payload' 답하지 못하면 trace 불가. System.debug 는 7일 후 휘발 + production 미수집. 구조화 로깅은 사고 1회 당 시간 비용 절감이 도입 비용을 상회."
+- **trigger-when**: design.md has batch / queueable / schedulable / @RestResource / external callout entry points, and the PROJECT.md `logging` section is unfilled (or specifies direct `System.debug` use).
+- **inventory-marker**: Nebula Logger namespace `nebc__*`, `force-app/**/classes/Logger.cls` (custom), `force-app/**/classes/IF_Log*.cls`, `structured-logging` record in decisions.md, **or** PROJECT.md `logging.log_sobject` is specified (treated as a custom convention being established).
+- **Representative candidates**:
+  - jongpie/NebulaLogger — de facto standard OSS logger in the Salesforce community.
+  - Custom log sObject + IF_Logger pattern.
+- **Recommendation rationale**: "If you can't answer 'who/when/which payload' during an operational incident, tracing is impossible. System.debug evaporates after 7 days + isn't collected in production. Structured logging's per-incident time savings exceeds its adoption cost."
 
 ---
 
-## 카탈로그 외 패턴
+## Patterns outside the catalog
 
-위 6개 외 패턴(예: state machine, event bus, OAuth helper)은 design 에 명시적으로 등장하면 그때 reviewer 가 자체 판단으로 카테고리 권고. 카탈로그는 **누락 빈도가 높은 핵심 패턴** 만 강제 점검 대상으로 둔다.
+For patterns beyond these 6 (e.g. state machine, event bus, OAuth helper), reviewers make their own category recommendation when they appear explicitly in the design. The catalog only enforces inspection for **core patterns with a high omission rate**.
 
-새 패턴을 카탈로그에 추가할 때는:
-1. trigger-when 조건이 grep/glob 으로 **객관적으로 판정 가능** 해야 함 (주관적 표현 금지).
-2. inventory-marker 가 file pattern + decisions.md key 둘 다 정의되어야 함.
-3. 권고 사유는 비즈니스 비용 (사고 비용 / 변경 비용) 으로 기술 — 기술 선호 어휘 금지.
+When adding a new pattern to the catalog:
+1. The trigger-when condition must be **objectively determinable** by grep/glob (no subjective wording).
+2. The inventory-marker must define both file pattern + decisions.md key.
+3. The recommendation rationale must be expressed as business cost (incident cost / change cost) — no technology-preference vocabulary.

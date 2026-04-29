@@ -1,110 +1,110 @@
-# Logging Convention (선언형)
+# Logging Convention (declarative)
 
-레퍼런스: Apex 진입점(배치/REST/Callout/Invocable/Schedulable/Queueable) 작성·리뷰·테스트 시 Read.
+Reference: Read when authoring/reviewing/testing Apex entry points (Batch/REST/Callout/Invocable/Schedulable/Queueable).
 
-이 룰은 **org마다 로그 객체 이름이 다르다**는 전제 위에 있다. 클래스명/헬퍼명/슈퍼클래스명을 박아두지 않고, 프로젝트가 `.harness-sf/PROJECT.md`에 선언한 **로그 sObject API name 1개**만 고정점으로 삼는다.
+This rule is built on the premise that **the log object name differs per org**. Class/helper/superclass names are not hardcoded; the only fixed point is the **single log sObject API name** declared by the project in `.harness-sf/PROJECT.md`.
 
-## 선언 위치
+## Declaration location
 
-`.harness-sf/PROJECT.md` 최상위에 다음 YAML-style 블록이 있으면 룰이 활성화된다. 블록이 없거나 `log_sobject`가 비어있으면 **룰 OFF** (false positive 0).
+The rule is activated when `.harness-sf/PROJECT.md` contains the following YAML-style block at the top level. If the block is missing or `log_sobject` is empty, the **rule is OFF** (zero false positives).
 
 ```yaml
 logging:
-  log_sobject: IF_Log__c            # org별로 다름 (예: Application_Log__c, txn_log__c)
-  required_fields:                  # 적재 시 채워야 할 필드 (코드 리뷰 단계에서는 존재만 확인)
+  log_sobject: IF_Log__c            # differs per org (e.g. Application_Log__c, txn_log__c)
+  required_fields:                  # fields that must be populated on insert (code review only checks existence)
     - ApexName__c
     - StatusCode__c
     - StartDatetime__c
-  entry_points:                     # 강제할 진입점 종류
+  entry_points:                     # entry-point types to enforce
     - batch                         # implements Database.Batchable
     - rest_resource                 # @RestResource
-    - callout                       # Http.send 호출자 (래퍼 클래스 외부)
+    - callout                       # Http.send caller (outside of wrapper class)
     - invocable                     # @InvocableMethod
     - queueable                     # implements Queueable
     - schedulable                   # implements Schedulable
   enforcement:
-    detection: behavioral           # 'behavioral' (도달성) | 'name' (이름 매칭) | 'marker' (인터페이스/어노테이션)
-    test_assertion: required        # 'required' | 'optional' — 진입점 테스트에서 로그 적재 단언 강제 여부
-    callout_wrapper: IF_Callout     # (선택) callout 진입점 검출 시 이 래퍼 *내부*는 검사 제외
+    detection: behavioral           # 'behavioral' (reachability) | 'name' (name match) | 'marker' (interface/annotation)
+    test_assertion: required        # 'required' | 'optional' — whether entry-point tests must assert log insertion
+    callout_wrapper: IF_Callout     # (optional) when callout entry points are detected, exclude *inside* of this wrapper
 ```
 
-**파싱 규칙**: agent들은 위 블록을 라인 단위 grep으로 추출한다 (`logging:` 헤더 ~ 다음 최상위 헤더 또는 EOF). 없으면 룰 비활성화.
+**Parsing rule**: agents extract this block via line-wise grep (`logging:` header ~ next top-level header or EOF). Absent → rule disabled.
 
-## 진입점 식별 (detection: behavioral 기준)
+## Entry-point identification (detection: behavioral basis)
 
-| `entry_points` 값 | 검출 토큰 |
+| `entry_points` value | Detection token |
 |---|---|
 | `batch` | `implements .*Database\.Batchable` |
 | `queueable` | `implements .*Queueable` |
 | `schedulable` | `implements .*Schedulable` |
-| `rest_resource` | `@RestResource` (클래스 어노테이션) |
-| `callout` | 메서드 본문 내 `new Http()` + `\.send\(` 또는 `HttpRequest` 직접 사용 |
-| `invocable` | `@InvocableMethod` (메서드 어노테이션) |
+| `rest_resource` | `@RestResource` (class annotation) |
+| `callout` | `new Http()` + `\.send\(` in method body, or direct `HttpRequest` use |
+| `invocable` | `@InvocableMethod` (method annotation) |
 
-테스트 클래스(`*Test.cls` / `*_Test.cls` / `Test*.cls`)는 모든 룰에서 제외.
+Test classes (`*Test.cls` / `*_Test.cls` / `Test*.cls`) are excluded from all rules.
 
-## 핵심 룰 — "진입점 → log_sobject DML 도달성"
+## Core rule — "entry point → log_sobject DML reachability"
 
-진입점으로 분류된 클래스 안에서, **`{log_sobject}` SObject에 대한 `insert` / `upsert` / `Database.insert` / `Database.upsert` DML 호출이 도달 가능**해야 한다.
+Within a class classified as an entry point, **a DML call (`insert` / `upsert` / `Database.insert` / `Database.upsert`) on the `{log_sobject}` SObject must be reachable**.
 
-도달 판정 (정규식 휴리스틱):
-1. **직접**: 같은 클래스 안에서 `new {log_sobject}\b` 또는 `{log_sobject}\b\s+\w+\s*=` 같이 sObject 인스턴스를 만들고 `insert|upsert|Database\.(insert|upsert)` 가 같은 파일에 등장.
-2. **간접**: 진입점 메서드가 호출하는 다른 메서드/클래스 어디선가 1번을 만족. 호출 그래프를 1-hop 까지만 탐색 (정규식 한계). 2-hop 이상은 불가시 영역으로 명시.
-3. **슈퍼클래스 위임**: 클래스가 `extends X` 일 때 `force-app/**/classes/X.cls` 안에서 1번 만족 시 도달로 간주.
-4. **래퍼 위임** (`callout` 진입점 한정): `callout_wrapper`로 선언된 클래스의 메서드를 호출하면 도달로 간주 (그 래퍼 *안*에서 1번을 만족할 책임).
+Reachability decision (regex heuristic):
+1. **Direct**: in the same class, an sObject instance is created via `new {log_sobject}\b` or `{log_sobject}\b\s+\w+\s*=`, and `insert|upsert|Database\.(insert|upsert)` appears in the same file.
+2. **Indirect**: somewhere in another method/class invoked by the entry-point method, condition 1 is satisfied. Call graph is traced only 1-hop (regex limit). 2+ hops are explicitly marked as out-of-visibility.
+3. **Superclass delegation**: when class `extends X`, condition 1 satisfied inside `force-app/**/classes/X.cls` is treated as reachable.
+4. **Wrapper delegation** (`callout` entry only): invoking a method on the class declared as `callout_wrapper` is treated as reachable (the wrapper is responsible for satisfying condition 1 *inside*).
 
-도달 불가 시: 🔴 **logging convention 위반 — `{진입점 종류}` `{ClassName}` 에서 `{log_sobject}` 적재 경로 미발견**.
+If unreachable: 🔴 **logging convention violation — `{log_sobject}` insertion path not found in `{entry-point type}` `{ClassName}`**.
 
-## 부가 룰
+## Auxiliary rules
 
-**catch 블록의 로그 적재**
-- 진입점 메서드의 try/catch 구조에서 catch 블록이 존재하는데 그 블록(또는 그 블록이 호출하는 메서드 1-hop)에서 `{log_sobject}` DML이 보이지 않으면 🟡 (성공 path만 로깅, 실패 path 누락).
+**Logging in catch blocks**
+- If the entry-point method has a try/catch and the catch block exists but no `{log_sobject}` DML is visible in the block (or in methods it calls 1-hop), 🟡 (only success path is logged, failure path is missing).
 
-**Callout 우회 검출**
-- `callout` 진입점 활성 시: `IF_Callout` 등 `callout_wrapper`로 선언된 클래스 외부에서 `new Http()` + `\.send\(` 패턴이 발견되면 🟡 ("래퍼 우회 — 로깅 자동화 미적용").
-- `callout_wrapper` 미선언 시 본 룰 비활성.
+**Callout bypass detection**
+- When `callout` entry points are active: if the `new Http()` + `\.send\(` pattern is found outside of the class declared as `callout_wrapper` (e.g. `IF_Callout`), 🟡 ("wrapper bypass — logging automation not applied").
+- When `callout_wrapper` is not declared, this rule is disabled.
 
-**필드 누락 (선택, optional)**
-- DML 직전에 `{required_fields}` 각 필드에 대한 대입(`{var}\.{field}\s*=`)이 보이는지 grep. 누락 필드는 🟢 정보로만 보고 (실제 값 검증은 테스트 단언이 책임짐).
+**Field omission (optional)**
+- Just before DML, grep for assignments to each `{required_fields}` field (`{var}\.{field}\s*=`). Missing fields are reported as 🟢 informational only (actual value validation is the test assertion's responsibility).
 
-## 테스트 단언 룰 (`enforcement.test_assertion: required`)
+## Test assertion rule (`enforcement.test_assertion: required`)
 
-진입점 클래스의 테스트 클래스에 다음 패턴 중 **하나 이상** 존재해야 한다:
+The test class for an entry-point class must contain **at least one** of the following patterns:
 
 ```apex
-// 패턴 A — count 단언
+// Pattern A — count assertion
 Integer logCount = [SELECT COUNT() FROM IF_Log__c WHERE ApexName__c = 'MyClass'];
 System.assert(logCount > 0, ...);
 
-// 패턴 B — 레코드 단언
+// Pattern B — record assertion
 List<IF_Log__c> logs = [SELECT Id, StatusCode__c FROM IF_Log__c];
 System.assertEquals('S', logs[0].StatusCode__c);
 ```
 
-검출: 테스트 메서드 안에 `[SELECT ... FROM {log_sobject}` SOQL + `System.assert(Equals)?` 동시 출현. 진입점별로 **정상 path 1건 + catch path 1건** 권장.
+Detection: a test method contains both `[SELECT ... FROM {log_sobject}` SOQL + `System.assert(Equals)?`. Recommended **1 success path + 1 catch path** per entry point.
 
-누락 시 `sf-apex-test-author` 가 자동 보강. 사용자가 거부하면 본문에 미보강 명시.
+If missing, `sf-apex-test-author` augments automatically. If the user declines, the body explicitly notes that augmentation was skipped.
 
-## 룰 OFF 케이스 (의도적)
+## Rule OFF cases (intentional)
 
-다음은 룰 비활성:
-- PROJECT.md에 `logging:` 섹션 없음 → 신규 org 또는 컨벤션 미수립 프로젝트.
-- `log_sobject:` 값이 비어있음.
-- 클래스가 `*Test.cls` 패턴 (테스트 자체).
-- 클래스에 `// @no-log` 주석 라인 존재 — 의도적 우회 표식. 본문에는 🟢 정보로 1줄 보고.
+The rule is disabled in:
+- No `logging:` section in PROJECT.md → new org or project without an established convention.
+- `log_sobject:` value is empty.
+- Class matches the `*Test.cls` pattern (the test itself).
+- Class contains a `// @no-log` comment line — intentional bypass marker. Reported as 🟢 informational, one line in the body.
 
-## Agent 책임 분담
+## Agent responsibility split
 
-| Agent | 단계 | 행동 |
+| Agent | Step | Action |
 |---|---|---|
-| `sf-apex-code-reviewer` | Step 3 공통 점검 + Step 4 분류별 점검 | 도달성 검사, catch 누락 검사, 우회 검출 |
-| `sf-deploy-validator` | Step 2 정적 분석 | Reviewer와 동일 룰 정규식 이중화 (우회 차단) |
-| `sf-apex-test-author` | Step 3 케이스 매트릭스 | 진입점이면 log_sobject SOQL 단언 자동 포함 |
+| `sf-apex-code-reviewer` | Step 3 common checks + Step 4 per-category checks | reachability check, missing-catch check, bypass detection |
+| `sf-deploy-validator` | Step 2 static analysis | duplicates the same regex rules as the reviewer (bypass blocking) |
+| `sf-apex-test-author` | Step 3 case matrix | for entry points, automatically include log_sobject SOQL assertions |
 
-세 agent 모두 PROJECT.md `logging:` 섹션을 Step 시작 직후 1회 Read. 섹션 없음 → 본 룰 skip.
+All three agents Read the PROJECT.md `logging:` section once at the start of their step. Section absent → skip this rule.
 
-## 한계 (의도적 절제)
+## Limits (intentional restraint)
 
-- 정규식 기반이므로 reflection / dynamic invocation 우회 불가. 그건 **테스트 단언**(`enforcement.test_assertion`)이 잡는다.
-- 호출 그래프 2-hop 이상은 추적 안 함. 깊은 위임은 본문에 "도달성 미확인 — 슈퍼/래퍼 1-hop 외 영역" 으로 보고.
-- 룰은 **존재 검증**이지 **품질 검증**이 아니다. 로그 내용이 의미 있는지는 사람의 코드 리뷰 책임.
+- Regex-based, so reflection / dynamic invocation bypasses are not detected. **Test assertions** (`enforcement.test_assertion`) catch those.
+- Call graphs beyond 2-hop are not traced. Deep delegation is reported in the body as "reachability unverified — beyond 1-hop super/wrapper area".
+- The rule is **existence verification**, not **quality verification**. Whether the log content is meaningful is the human reviewer's responsibility.

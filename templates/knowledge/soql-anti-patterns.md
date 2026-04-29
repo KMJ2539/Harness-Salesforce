@@ -1,26 +1,26 @@
 # SOQL Anti-Patterns
 
-레퍼런스: Apex/dynamic SOQL 작성/리뷰 시 Read.
+Reference: Read when authoring/reviewing Apex/dynamic SOQL.
 
 ## Selectivity (Indexed Filter)
 
-표준 indexed 필드: `Id`, `Name`, `OwnerId`, `CreatedDate`, `SystemModstamp`, `RecordTypeId`, master-detail/lookup, External ID, Unique 필드.
+Standard indexed fields: `Id`, `Name`, `OwnerId`, `CreatedDate`, `SystemModstamp`, `RecordTypeId`, master-detail/lookup, External ID, Unique fields.
 
-큰 표준 객체 (Account/Contact/Case/Lead/Opportunity/Task/Event 등 200K+ rows)에서 **WHERE 절에 indexed 필드 selective 조건이 없으면 non-selective query**.
+On large standard objects (Account/Contact/Case/Lead/Opportunity/Task/Event etc., 200K+ rows), **a query with no selective indexed-field condition in the WHERE clause is a non-selective query**.
 
-| 패턴 | 평가 |
+| Pattern | Verdict |
 |---|---|
-| `SELECT ... FROM Account` (no WHERE) | 🔴 large org에서 timeout |
-| `WHERE Status__c = 'Active'` (non-indexed) | 🟡 비율 따라 selective |
+| `SELECT ... FROM Account` (no WHERE) | 🔴 timeout in large orgs |
+| `WHERE Status__c = 'Active'` (non-indexed) | 🟡 selective depending on ratio |
 | `WHERE Id IN :ids` | 🟢 selective |
-| `WHERE Name LIKE '%foo%'` | 🔴 leading wildcard, index 무효 |
-| `WHERE Name LIKE 'foo%'` | 🟢 trailing wildcard, index 사용 |
+| `WHERE Name LIKE '%foo%'` | 🔴 leading wildcard, index unused |
+| `WHERE Name LIKE 'foo%'` | 🟢 trailing wildcard, index used |
 | `WHERE CreatedDate >= LAST_N_DAYS:30` | 🟢 indexed |
 
 ## SOQL Injection
 
 ```apex
-// 🔴 위험
+// 🔴 unsafe
 String userInput = ApexPages.currentPage().getParameters().get('q');
 Database.query('SELECT Id FROM Account WHERE Name = \'' + userInput + '\'');
 
@@ -28,11 +28,11 @@ Database.query('SELECT Id FROM Account WHERE Name = \'' + userInput + '\'');
 String safe = String.escapeSingleQuotes(userInput);
 Database.query('SELECT Id FROM Account WHERE Name = \'' + safe + '\'');
 
-// 🟢 더 좋음 — bind variable
+// 🟢 better — bind variable
 [SELECT Id FROM Account WHERE Name = :userInput];
 ```
 
-dynamic SOQL이 꼭 필요한 경우만 사용. 가능하면 static query + bind variable.
+Use dynamic SOQL only when truly necessary. Prefer static query + bind variable when possible.
 
 ## N+1 / Loop SOQL
 
@@ -53,20 +53,20 @@ for (Contact c : [SELECT Id, AccountId FROM Contact WHERE AccountId IN :ids]) {
 
 ## Aggregate / Subquery
 
-- `[SELECT COUNT() FROM ...]` → Integer 반환, row 한도 미적용.
-- subquery `[SELECT Id, (SELECT Id FROM Contacts) FROM Account]` → Contact rows도 50K 한도에 합산.
-- GROUP BY: `AggregateResult` 반환, `get('expr0')`로 값 추출.
+- `[SELECT COUNT() FROM ...]` → returns Integer, no row-limit applied.
+- subquery `[SELECT Id, (SELECT Id FROM Contacts) FROM Account]` → Contact rows count toward the 50K limit too.
+- GROUP BY: returns `AggregateResult`, retrieve values via `get('expr0')`.
 
-## LIMIT 강제
+## LIMIT enforcement
 
-큰 객체 query는 항상 LIMIT 또는 selective WHERE. trigger context에서 trigger.new.size 기반 IN clause는 OK (max 200).
+Queries on large objects always require LIMIT or a selective WHERE. In trigger context, an IN clause based on `trigger.new.size` is OK (max 200).
 
 ## SOSL vs SOQL
 
-- 텍스트 검색 → SOSL (`FIND :term IN ALL FIELDS RETURNING Account(Id, Name)`).
-- 정확한 필드 매칭 → SOQL.
+- Text search → SOSL (`FIND :term IN ALL FIELDS RETURNING Account(Id, Name)`).
+- Exact field matching → SOQL.
 
-## 관련 토픽
+## Related topics
 
 - governor-limits.md
 - sharing-fls-crud.md (WITH USER_MODE)
