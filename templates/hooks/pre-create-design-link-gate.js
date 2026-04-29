@@ -54,7 +54,13 @@ function findFreshDesignSentinel() {
 }
 
 (function main() {
+  // PR D — scoped override + audit logging.
+  try { require('./_lib/override').logIfActive('create', 'pre-create-design-link-gate'); } catch { /* non-fatal */ }
   if (process.env.HARNESS_SF_SKIP_CREATE_GATE === '1') process.exit(0);
+  try {
+    const { isActive } = require('./_lib/override');
+    if (isActive('create')) process.exit(0);
+  } catch { /* fall through */ }
 
   const raw = readStdin();
   let payload = {};

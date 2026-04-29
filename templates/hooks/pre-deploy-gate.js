@@ -75,7 +75,13 @@ function isDeployStart(cmd) {
   const cmd = payload.tool_input && payload.tool_input.command;
   if (!isDeployStart(cmd)) process.exit(0);
 
+  // PR D — scoped override + audit logging.
+  try { require('./_lib/override').logIfActive('deploy', 'pre-deploy-gate'); } catch { /* non-fatal */ }
   if (process.env.HARNESS_SF_SKIP_DEPLOY_GATE === '1') process.exit(0);
+  try {
+    const { isActive } = require('./_lib/override');
+    if (isActive('deploy')) process.exit(0);
+  } catch { /* fall through */ }
 
   // PR C2/C3 — prefer canonical state.deploy.last_validation (fingerprint).
   // Fall back to legacy .harness-sf/last-validation.json (head_sha) until

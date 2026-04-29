@@ -38,7 +38,13 @@ function inForceApp(rel) {
 }
 
 (function main() {
+  // PR D — scoped override + audit logging.
+  try { require('./_lib/override').logIfActive('modify', 'pre-modify-approval-gate'); } catch { /* non-fatal */ }
   if (process.env.HARNESS_SF_SKIP_MODIFY_GATE === '1') process.exit(0);
+  try {
+    const { isActive } = require('./_lib/override');
+    if (isActive('modify')) process.exit(0);
+  } catch { /* fall through */ }
 
   const raw = readStdin();
   let payload = {};

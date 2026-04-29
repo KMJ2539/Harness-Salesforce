@@ -66,7 +66,9 @@ const ROUTES = {
   score:   { _direct: './score-cli.js' },
   context: { _direct: './check-feature-context.js' },
   audit: {
-    verify: null, // PR 5: hash-chain verify
+    verify: './audit-cli.js',
+    tail:   './audit-cli.js',
+    append: './audit-cli.js',
   },
   // PR A — state-consolidation v3 foundation.
   state: {
@@ -119,9 +121,8 @@ if (route._direct) {
   if (!(cmd in route)) fail(`unknown command: ${ns} ${cmd}`, 2);
   target = route[cmd];
   if (!target) fail(`${ns} ${cmd} is not implemented yet (planned in a later PR).`, 3);
-  // For dispatch namespace the legacy CLI expects `<cmd> <slug> ...` so we keep cmd as first arg.
-  // For state namespace the new CLI also expects subcommand as first arg.
-  if (ns === 'dispatch' || ns === 'state') {
+  // For dispatch / state / audit namespaces the underlying CLI expects subcommand as first arg.
+  if (ns === 'dispatch' || ns === 'state' || ns === 'audit') {
     forwardArgs = [cmd, ...argv.slice(2)];
   } else {
     forwardArgs = argv.slice(2);

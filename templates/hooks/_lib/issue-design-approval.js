@@ -74,8 +74,14 @@ if (!name) {
 // Resolution-log gate: if `## Reviews` section exists, every HIGH/MEDIUM risk
 // must have a resolution line. Library Verdict gate (feature only): every
 // artifact must be classified by sf-design-library-reviewer.
-// Skip via HARNESS_SF_SKIP_RESOLUTION_GATE=1.
-if (process.env.HARNESS_SF_SKIP_RESOLUTION_GATE !== '1') {
+// Skip via HARNESS_SF_SKIP_RESOLUTION_GATE=1 (legacy) or HARNESS_SF_OVERRIDE='design:<reason>' (PR D).
+let skipResolution = process.env.HARNESS_SF_SKIP_RESOLUTION_GATE === '1';
+try {
+  const ovr = require('./override');
+  ovr.logIfActive('design', 'issue-design-approval');
+  if (ovr.isActive('design')) skipResolution = true;
+} catch { /* fall through */ }
+if (!skipResolution) {
   const validator = path.join(__dirname, 'validate-design.js');
   const validatorArgs = [validator, rel, '--check-resolution'];
   if (type === 'feature') validatorArgs.push('--check-library-verdict');
