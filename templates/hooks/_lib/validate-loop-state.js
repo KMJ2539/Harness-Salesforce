@@ -29,6 +29,43 @@
 const fs = require('fs');
 const path = require('path');
 
+// PR B — best-effort dual-write to .harness-sf/state/<slug>__r<rev>.json.
+// Only loop.iteration syncs (legacy total). loop.last_error_class is left
+// to deploy-classify/gate-side updates.
+let store;
+try { store = require('./state/store'); } catch { store = null; }
+
+function findStateRevision(slug) {
+  if (!store) return null;
+  const dir = path.join(process.cwd(), '.harness-sf', 'state');
+  if (!fs.existsSync(dir)) return null;
+  const escaped = slug.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const re = new RegExp(`^${escaped}__r(\\d+)\\.json$`);
+  const matches = fs.readdirSync(dir)
+    .map(f => f.match(re))
+    .filter(Boolean)
+    .map(m => parseInt(m[1], 10))
+    .sort((a, b) => b - a);
+  return matches[0] || null;
+}
+
+function dualSyncLoop(slug, iteration) {
+  const rev = findStateRevision(slug);
+  if (!store || rev === null) return;
+  if (typeof iteration !== 'number' || iteration < 0 || iteration > 4) return;
+  try {
+    store.writeState(slug, rev, (cur) => {
+      if (!cur) return null;
+      const next = JSON.parse(JSON.stringify(cur));
+      next.loop = next.loop || { iteration: 0, last_error_class: null };
+      next.loop.iteration = iteration;
+      return next;
+    }, { operation: `validate-loop:dual-sync iter=${iteration}` });
+  } catch {
+    // best-effort
+  }
+}
+
 const CAPS = { 'code-fix': 2, 'design-fix': 2, total: 4 };
 const VALID_KINDS = new Set(['code-fix', 'design-fix']);
 
@@ -63,6 +100,7 @@ function init(slug) {
     history: [],
   };
   save(slug, state);
+  dualSyncLoop(slug, 0);
   return state;
 }
 
@@ -92,6 +130,7 @@ function incr(slug, kind, note) {
   state.last_at = new Date().toISOString();
   state.history.push({ ts: state.last_at, kind, summary: note || '' });
   save(slug, state);
+  dualSyncLoop(slug, state.total);
   return state;
 }
 
@@ -107,6 +146,7 @@ function get(slug) {
 function reset(slug) {
   const p = statePath(slug);
   if (fs.existsSync(p)) fs.unlinkSync(p);
+  dualSyncLoop(slug, 0);
   return { slug, reset: true };
 }
 
