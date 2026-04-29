@@ -59,8 +59,32 @@ safe(() => {
   design = files[0].f;
 });
 
-// 2b. dispatch-state (preferred over design.md status parsing — machine-readable)
+// 2b. dispatch-state — prefer canonical .harness-sf/state/<slug>__r<rev>.json
+//      (PR B dual-read). Falls back to legacy .cache/dispatch-state/<slug>.json.
+let currentStep = null;
+let enteredVia = null;
 safe(() => {
+  const stateDir = path.join(harnessDir, 'state');
+  if (fs.existsSync(stateDir)) {
+    const files = fs.readdirSync(stateDir)
+      .filter(f => /^[a-z0-9-]+__r\d+\.json$/.test(f))
+      .map(f => ({ f, m: fs.statSync(path.join(stateDir, f)).mtimeMs }))
+      .sort((a, b) => b.m - a.m);
+    if (files.length) {
+      const state = JSON.parse(fs.readFileSync(path.join(stateDir, files[0].f), 'utf8'));
+      if (state && Array.isArray(state.artifacts)) {
+        const total = state.artifacts.length;
+        const done = state.artifacts.filter(a => a.status === 'done').length;
+        const failed = state.artifacts.filter(a => a.status === 'failed').length;
+        dispatchSummary = `${done}/${total}${failed ? `!${failed}` : ''}`;
+        dispatchFailed = failed > 0;
+        if (state.current_step) currentStep = state.current_step;
+        if (state.entered_via) enteredVia = state.entered_via;
+        return; // canonical succeeded — skip legacy
+      }
+    }
+  }
+  // Legacy fallback.
   const dsDir = path.join(cacheDir, 'dispatch-state');
   if (!fs.existsSync(dsDir)) return;
   const files = fs.readdirSync(dsDir)
@@ -130,6 +154,8 @@ if (design) {
   parts.push(`design:${short.slice(0, 28)}`);
 }
 if (dispatchSummary) parts.push(`dispatch:${dispatchSummary}${dispatchFailed ? ' ✗' : ''}`);
+if (enteredVia && enteredVia !== 'full') parts.push(`[${enteredVia}]`);
+if (currentStep) parts.push(`step:${currentStep}`);
 if (scoreSummary) parts.push(`score:${scoreSummary}`);
 if (lastVal) parts.push(`val:${lastVal}`);
 
