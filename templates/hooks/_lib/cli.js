@@ -70,11 +70,12 @@ const ROUTES = {
   },
   // PR A — state-consolidation v3 foundation.
   state: {
-    init:           './state/cli.js',
-    read:           './state/cli.js',
-    set:            './state/cli.js',
-    'force-set':    './state/cli.js',
-    'advance-step': './state/cli.js',
+    init:              './state/cli.js',
+    read:              './state/cli.js',
+    set:               './state/cli.js',
+    'force-set':       './state/cli.js',
+    'advance-step':    './state/cli.js',
+    'migrate-from-v1': './state/cli.js',
   },
   doctor: { _direct: './state/doctor.js' },
 };

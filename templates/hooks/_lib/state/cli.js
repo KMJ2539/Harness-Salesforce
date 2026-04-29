@@ -136,6 +136,27 @@ if (cmd === 'set' || cmd === 'force-set') {
   process.exit(0);
 }
 
+if (cmd === 'migrate-from-v1') {
+  const { migrateFeature } = require('./migrate');
+  const slug = argv[1];
+  if (!slug) fail('migrate-from-v1 requires: <slug> [--design-path <path>] [--dry-run]');
+  const designPathArg = argv.find(a => a.startsWith('--design-path='));
+  const designPath = designPathArg ? designPathArg.slice('--design-path='.length) : null;
+  const dryRun = argv.includes('--dry-run');
+
+  const result = migrateFeature({ slug, designPath, dryRun });
+  for (const w of result.warnings || []) process.stderr.write(`  warning: ${w}\n`);
+  for (const e of result.errors || []) process.stderr.write(`  error: ${e}\n`);
+  if (!result.ok) process.exit(2);
+  if (dryRun) {
+    process.stdout.write(`migrate (dry-run) → ${result.statePath}\n`);
+    process.stdout.write(JSON.stringify(result.dryRunState, null, 2) + '\n');
+  } else {
+    process.stdout.write(`migrate-from-v1: ${result.statePath} written\n`);
+  }
+  process.exit(0);
+}
+
 if (cmd === 'advance-step') {
   const [, slug, designRevisionStr, newStep] = argv;
   if (!slug || !designRevisionStr || !newStep) fail('advance-step requires: <slug> <design-revision> <new-step>');
@@ -164,4 +185,4 @@ if (cmd === 'advance-step') {
   process.exit(0);
 }
 
-fail(`unknown subcommand: ${cmd || '(none)'}. Supported: init | read | set | force-set | advance-step`, 2);
+fail(`unknown subcommand: ${cmd || '(none)'}. Supported: init | read | set | force-set | advance-step | migrate-from-v1`, 2);
