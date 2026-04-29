@@ -13,7 +13,7 @@ If the caller (`/sf-feature`, etc.) passes a feature design.md path + artifact I
 ```bash
 node .claude/hooks/_lib/check-delegated-token.js <design-md-path> <artifact-id>
 ```
-exit 0 → delegated mode confirmed (load the matching field artifact section in design.md — object, API name, type, length/picklist values, etc. — skip the Step 1 question battery and start from Step 2 context analysis; on completion/failure the caller updates status via dispatch-state-cli).
+exit 0 → delegated mode confirmed (load the matching field artifact section in design.md — object, API name, type, length/picklist values, etc. — skip the Step 1 question battery and start from Step 2 context analysis; on completion/failure the caller updates status via dispatch-state-cli, which writes canonical .harness-sf/state/<slug>__r<rev>.json).
 exit 1 → standalone mode (start from Step 0.3 below).
 
 ## Step 0.3: Feature context gate (required when entering standalone)

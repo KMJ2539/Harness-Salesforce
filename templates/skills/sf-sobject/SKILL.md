@@ -23,7 +23,7 @@ exit 0 → delegated mode confirmed; exit 1 → standalone.
 - Load the matching sobject artifact section from design.md `## Artifacts` (API name, label, sharing model, name field, etc.).
 - Skip Steps 1–1.9.
 - Start from Step 2; intent comes from design.md.
-- On completion/failure, the caller (/sf-feature) updates status via dispatch-state-cli — this sub-skill only appends one line to design.md `## Dispatch Log`.
+- On completion/failure, the caller (/sf-feature) updates status via dispatch-state-cli (writes canonical state.json) — this sub-skill only appends one line to design.md `## Dispatch Log`.
 
 For standalone mode, start from Step 0.3 below.
 

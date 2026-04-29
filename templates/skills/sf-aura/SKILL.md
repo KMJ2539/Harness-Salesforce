@@ -13,7 +13,7 @@ If the caller (`/sf-feature`) passes a feature design.md path + artifact ID, thi
 ```bash
 node .claude/hooks/_lib/check-delegated-token.js <design-md-path> <artifact-id>
 ```
-exit 0 → delegated mode confirmed (load the matching aura artifact section in design.md, skip the Step 0 LWC feasibility check and the Step 1 intent questions — already covered at the feature level — and start from Step 2; on completion/failure the caller updates status via dispatch-state-cli).
+exit 0 → delegated mode confirmed (load the matching aura artifact section in design.md, skip the Step 0 LWC feasibility check and the Step 1 intent questions — already covered at the feature level — and start from Step 2; on completion/failure the caller updates status via dispatch-state-cli, which now writes canonical .harness-sf/state/<slug>__r<rev>.json).
 exit 1 → standalone mode (start from Step -0.5 below).
 
 ## Step -0.5: Feature context gate (required when entering standalone)

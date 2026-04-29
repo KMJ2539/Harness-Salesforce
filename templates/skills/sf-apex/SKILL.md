@@ -49,8 +49,8 @@ node .claude/hooks/_lib/check-delegated-token.js <design-md-path> <artifact-id>
 2. Extract the matching artifact entry from the `## Artifacts` section — type, name, role, dependencies, sharing modifier, and other intent information are there.
 3. **Skip Step 1, 1.5, 1.7, and 1.9 entirely** — design and review have already been completed at the feature level.
 4. Start from Step 2 (context-explorer). The intent source is the artifact section in the feature design.md instead of a user dialogue.
-5. When code work completes, the caller (/sf-feature) updates status via `dispatch-state-cli.js done {slug} {id}` — this sub-skill only appends one line to design.md `## Dispatch Log`.
-6. On failure, return an error summary to the caller (the caller handles `dispatch-state-cli.js fail`).
+5. When code work completes, the caller (/sf-feature) updates status via `dispatch-state-cli done {slug} {id}` (canonical state.json under the hood) — this sub-skill only appends one line to design.md `## Dispatch Log`.
+6. On failure, return an error summary to the caller (the caller handles `dispatch-state-cli fail`).
 
 **Standalone mode** (default / no sentinel): start from Step 0.3 below.
 

@@ -28,10 +28,10 @@ Hook gates and orchestration helpers read state from JSON files under `.harness-
 | `design-approvals/<hash>.json` | `_lib/issue-design-approval.js` (skills, after 5-persona review) | `pre-create-design-link-gate.js` | 2h |
 | `library-approvals/<hash>.json` | `_lib/issue-library-approval.js` (`/sf-library-install`) | `pre-library-install-gate.js` | 30 min |
 | `delegated-mode/<hash>.json` | `_lib/issue-delegated-token.js` (`/sf-feature` Step 6 per artifact) | `_lib/check-delegated-token.js` (sub-skill Step 0) | 30 min |
-| `dispatch-state/<feature-slug>.json` | `_lib/dispatch-state-cli.js init` (`/sf-feature` Step 6.0) | `_lib/dispatch-state-cli.js` (start/done/fail/skip) + `statusline.js` | — (lifecycle of the feature) |
+| `state/<slug>__r<rev>.json` (canonical) | `_lib/dispatch-state-cli.js init` or `hsf state init` (`/sf-feature` Step 6.0) | all of dispatch-state-cli (start/done/fail/skip), validate-loop-state, statusline | — (lifecycle of the feature) |
 | `last-validation.json` | `sf-deploy-validator` agent | `pre-deploy-gate.js` | 30 min |
 
-All approval/token sentinels also bind to `git rev-parse HEAD` — any new commit invalidates them, forcing fresh approval. Dispatch state stores `head_sha` for resume-time validation but does not auto-expire (a feature can legitimately span hours).
+All approval/token sentinels bind to a repo `fingerprint` ({mode: git/tree-hash/timestamp, value: hash}) computed by `_lib/state/fingerprint.js`. Any code change invalidates them, forcing fresh approval. Canonical state is in `.harness-sf/state/` (gitignored). Sentinels live in `.harness-sf/.cache/` (gitignored).
 
 ## `_lib/`
 
