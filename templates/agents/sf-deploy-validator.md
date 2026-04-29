@@ -223,7 +223,7 @@ Only when the verdict is `✅ READY TO DEPLOY`, Write `.harness-sf/last-validati
 ```json
 {
   "validated_at": "{ISO8601 UTC, e.g., 2026-04-28T10:23:45Z}",
-  "head_sha": "{result of git rev-parse HEAD; null if missing/failed}",
+  "fingerprint": "{call: Bash node -e 'process.chdir(process.cwd()); const fp = require(\".claude/hooks/_lib/state/fingerprint\"); console.log(JSON.stringify(fp.fingerprint()));' — paste object as { mode, value }}",
   "validation_result": "Succeeded",
   "target_org": "{alias}",
   "is_sandbox": true,
@@ -235,4 +235,6 @@ Only when the verdict is `✅ READY TO DEPLOY`, Write `.harness-sf/last-validati
 
 `coverage_overall` is **required** — record `runTestResult` org-wide coverage as a 0–100 number. Missing/non-numeric blocks deploy via `pre-deploy-gate.js`. The default gate threshold is 75%; if `.harness-sf/PROJECT.md` has a `coverage_target_percent: NN` line, that overrides; if env var `HARNESS_SF_COVERAGE_TARGET=NN` is set, that overrides further. `coverage_per_class` is body-report material (gate inspects overall only) but informs BLOCKED decisions.
 
-When the verdict is 🔴 BLOCKED / 🟡 PROCEED WITH CAUTION, **do not update the sentinel** (any stale sentinel is rejected by the hook via freshness/HEAD sha checks). Populate `head_sha` via `Bash: git rev-parse HEAD`; on failure leave it `null` and add a one-line "git HEAD unverified — gate skips sha check" in the body.
+`fingerprint` is **required** — populate via `Bash: node -e "console.log(JSON.stringify(require('.claude/hooks/_lib/state/fingerprint').fingerprint()))"`. The returned object has shape `{ mode: "git" | "tree-hash" | "timestamp", value: "..." }`. `pre-deploy-gate.js` compares this against the current repo fingerprint; any drift since validation invalidates the sentinel and forces a re-run. Legacy `head_sha` field has been replaced — do not write it.
+
+When the verdict is 🔴 BLOCKED / 🟡 PROCEED WITH CAUTION, **do not update the sentinel** (any stale sentinel is rejected by the hook via freshness/fingerprint checks).

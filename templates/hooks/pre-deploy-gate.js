@@ -121,21 +121,17 @@ function isDeployStart(cmd) {
     deny(`deploy gate: validation is ${min}m old (>${ttlMin}m TTL) (${valSource}). Re-run /sf-deploy-validator.`);
   }
 
-  // Integrity check — fingerprint (new) or head_sha (legacy).
-  if (val.fingerprint) {
-    if (!fingerprintLib) deny(`deploy gate: fingerprint module unavailable.`);
-    let cur = null;
-    try { cur = fingerprintLib.fingerprint(); } catch { cur = null; }
-    if (!cur) deny(`deploy gate: cannot compute current fingerprint.`);
-    if (!fingerprintLib.compare(cur, val.fingerprint)) {
-      deny(`deploy gate: fingerprint mismatch (approved mode=${val.fingerprint.mode} value=${String(val.fingerprint.value).slice(0, 12)}…, now mode=${cur.mode} value=${String(cur.value).slice(0, 12)}…) (${valSource}). Re-run /sf-deploy-validator.`);
-    }
-  } else if (val.head_sha) {
-    // Legacy path. Inline head_sha check (sentinel.validate now requires fingerprint).
-    const head = sentinel.gitHeadSha();
-    if (head && val.head_sha !== head) {
-      deny(`deploy gate: HEAD moved since validation (approved ${String(val.head_sha).slice(0, 7)}, now ${head.slice(0, 7)}) (${valSource}). Re-run /sf-deploy-validator.`);
-    }
+  // Integrity check — fingerprint required (head_sha legacy retired now that
+  // sf-deploy-validator agent emits fingerprint).
+  if (!val.fingerprint) {
+    deny(`deploy gate: validation missing 'fingerprint' field (${valSource}). Old sf-deploy-validator output? Re-run validator on the latest agent.`);
+  }
+  if (!fingerprintLib) deny(`deploy gate: fingerprint module unavailable.`);
+  let cur = null;
+  try { cur = fingerprintLib.fingerprint(); } catch { cur = null; }
+  if (!cur) deny(`deploy gate: cannot compute current fingerprint.`);
+  if (!fingerprintLib.compare(cur, val.fingerprint)) {
+    deny(`deploy gate: fingerprint mismatch (approved mode=${val.fingerprint.mode} value=${String(val.fingerprint.value).slice(0, 12)}…, now mode=${cur.mode} value=${String(cur.value).slice(0, 12)}…) (${valSource}). Re-run /sf-deploy-validator.`);
   }
 
   const target = resolveCoverageTarget();
