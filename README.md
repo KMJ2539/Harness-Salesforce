@@ -117,19 +117,45 @@ harness-sf/
 
 `templates/` is the single source of truth. The installed `.claude/` directory in a consumer project mirrors this structure.
 
-## Mechanism layer (hooks)
+## What's enforced vs advisory
 
-`harness-sf` doesn't just supply prompts — it ships **Claude Code hooks** that enforce the rules at tool-call time, so policies hold even when the model drifts. Examples:
+`harness-sf` mixes two layers. Hooks **enforce** at tool-call time so policy holds even when the model drifts; agent/skill prompts are **advisory** — they shape behavior but the model can deviate.
 
-- **Path guard** — agents can only Write to their declared prefixes; reviewers can't Write at all.
-- **Profile deny** — `force-app/**/profiles/**.profile-meta.xml` is blocked for all agents (Permission Set only).
-- **Modify approval gate** — overwriting an existing `force-app/**` file requires a fresh user-approved sentinel (TTL 30 min + git HEAD match).
-- **Design link gate** — creating new `force-app/**` code requires a design.md whose 5-persona review was approved (TTL 2h + HEAD match).
-- **Deploy gate** — `sf project deploy start` is blocked unless `sf-deploy-validator` succeeded recently with coverage ≥ target.
-- **Library install gate** — `sf package install` / `git clone` / `npm install` for libraries requires plan + approval first.
-- **Output caps** — analyzer/reviewer outputs >80 lines or with `block` verdicts are rejected.
+### Enforced by hooks (block at tool call)
 
-Each gate has a `HARNESS_SF_SKIP_*=1` env-var escape hatch for emergencies. Full hook table: `templates/hooks/README.md`.
+These gates run as Claude Code hooks. Project-local install only — `--global` does not install hooks.
+
+| Gate | What it blocks | Trigger | Escape hatch |
+|---|---|---|---|
+| Path guard | Subagent Write/Edit outside its declared path-prefix | `pre-write-path-guard.js` on every Write/Edit/MultiEdit | (per-agent — none; main agent is unrestricted) |
+| Profile deny | Edits to `force-app/**/profiles/**.profile-meta.xml` (all agents, including main) | same hook | `HARNESS_SF_ALLOW_PROFILE_EDIT=1` |
+| Reviewer read-only | Any Write by `sf-design-*-reviewer` / `sf-apex-code-reviewer` | same hook | (none — defense in depth with frontmatter) |
+| Design link gate | Creating new `force-app/main/default/{classes,triggers,lwc,aura,objects}/**` without a fresh design-approval sentinel | `pre-create-design-link-gate.js` (TTL 2h + HEAD match) | `HARNESS_SF_SKIP_CREATE_GATE=1` |
+| Modify approval gate | Editing an existing `force-app/**` file without an explicit modify-approval sentinel | `pre-modify-approval-gate.js` (TTL 30m + HEAD match) | `HARNESS_SF_SKIP_MODIFY_GATE=1` |
+| Deploy gate | `sf project deploy start` / `sfdx force:source:deploy` without recent successful validate-only + coverage ≥ target | `pre-deploy-gate.js` (TTL 30m) | `HARNESS_SF_SKIP_DEPLOY_GATE=1` |
+| Library install gate | `sf package install` / `git clone` / `npm install <lib>` without prior plan+approval | `pre-library-install-gate.js` | `HARNESS_SF_SKIP_LIBRARY_GATE=1` |
+| Reviewer output cap | Reviewer body >80 lines or containing a `block` verdict | `stop-reviewer-validate.js` (SubagentStop) | (none — re-emit the report) |
+| Analyzer output cap | Analyzer body >80 lines without a `Details:` link to a report file | `stop-analyzer-validate.js` (SubagentStop) | (none) |
+
+Coverage target defaults to 75% and is overridable via `HARNESS_SF_COVERAGE_TARGET=NN` or `coverage_target_percent: NN` in `.harness-sf/PROJECT.md`.
+
+### Advisory (prompts, not hooks)
+
+These shape model behavior but are not enforced — a misbehaving model can ignore them. Hook layer is the safety net.
+
+- `with sharing`, FLS/CRUD guards, escaped dynamic SOQL, no hardcoded IDs in generated Apex.
+- Trigger framework adoption, bulkification, recursion guards.
+- Test-class self-verify loop (run → fix → re-run).
+- 5-persona review tradeoff format (risk-graded, no `block` verdict).
+- "Unknown areas" enumeration when metadata cannot be confidently identified.
+
+### Caveats — global install
+
+`npx harness-sf init --global` installs agents/skills into `~/.claude/` so they're available across all projects, but **hooks are not installed** in that mode. The reasoning: hooks read project-local state (`.harness-sf/.cache/`, `.harness-sf/PROJECT.md`, git HEAD) that doesn't exist user-wide. Use project-local install whenever enforcement matters.
+
+A consumer project can mix the two: install agents/skills globally and run `npx harness-sf init --hooks-only` per project to add the enforcement layer.
+
+Full hook reference (sentinel paths, exit codes, ordering): [`templates/hooks/README.md`](templates/hooks/README.md).
 
 ## Project config
 
