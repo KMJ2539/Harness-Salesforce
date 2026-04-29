@@ -3,17 +3,30 @@
 // Sentinel = JSON file under .harness-sf/.cache/<kind>/<key>.json that proves
 // "this action was approved at this point in time, against this code state".
 //
-// Two invariants:
+// Invariants enforced by validate():
 //   1) TTL freshness — approval not older than ttlMs
-//   2) head_sha match — current git HEAD == sha at approval time (skipped if not a git repo)
+//   2) head_sha match (legacy) — current git HEAD == sha at approval time
+//      (skipped if not a git repo). Will be removed in PR C3.
+//   3) fingerprint match (PR C1+) — when sentinel includes a fingerprint
+//      object, the current repo fingerprint must match by both mode AND value.
+//   4) state_version freshness (PR C1+, optional) — when sentinel binds a
+//      slug+revision, the current state.json's version must NOT have advanced
+//      past sentinel.state_version (sentinel was issued against a snapshot).
+//
+// PR C1 ships dual-shape: writers populate BOTH head_sha (legacy) and the new
+// fingerprint/state_version/design_body_hash fields when context permits.
+// validate() prefers the new fields when present and falls back to head_sha
+// otherwise. PR C2 will move gates to the new fields. PR C3 drops head_sha.
 //
 // Public API:
 //   - sentinelDir(kind)               → absolute dir for a sentinel kind
 //   - sentinelPath(kind, key)         → absolute file path
 //   - keyFromPath(absPath)            → stable sha1 key for a file path
 //   - readSentinel(kind, key)         → parsed JSON or null
-//   - writeSentinel(kind, key, extra) → writes { issued_at, head_sha, ...extra }
-//   - validate(sentinel, ttlMs)       → { ok, reason } — TTL + head_sha checks
+//   - writeSentinel(kind, key, extra) → writes JSON with both shapes
+//       extra may include: slug, design_revision, design_body_hash to enable
+//       state_version capture from .harness-sf/state/<slug>__r<rev>.json.
+//   - validate(sentinel, ttlMs)       → { ok, reason }
 //   - gitHeadSha()                    → 40-char SHA or null
 //   - cwd()                           → process.cwd()
 
@@ -21,6 +34,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+
+// PR C1 — fingerprint abstraction. Optional require so tests / earlier
+// callers without the state/ subtree don't break.
+let fingerprintLib;
+try { fingerprintLib = require('./state/fingerprint'); } catch { fingerprintLib = null; }
+let stateStore;
+try { stateStore = require('./state/store'); } catch { stateStore = null; }
 
 function cwd() { return process.cwd(); }
 
@@ -58,17 +78,39 @@ function readSentinel(kind, key) {
 function writeSentinel(kind, key, extra = {}) {
   const dir = sentinelDir(kind);
   fs.mkdirSync(dir, { recursive: true });
+
+  // PR C1 — populate new shape alongside legacy head_sha when context permits.
+  let fp = null;
+  if (fingerprintLib) {
+    try { fp = fingerprintLib.fingerprint(); } catch { fp = null; }
+  }
+
+  let stateVersion = null;
+  if (stateStore && extra && extra.slug && extra.design_revision) {
+    try {
+      const cur = stateStore.readState(extra.slug, extra.design_revision);
+      if (cur) stateVersion = cur.version;
+    } catch { stateVersion = null; }
+  }
+
   const data = {
     issued_at: new Date().toISOString(),
-    head_sha: gitHeadSha(),
+    head_sha: gitHeadSha(), // legacy — drops in PR C3
+    ...(fp ? { fingerprint: fp } : {}),
+    ...(stateVersion !== null ? { state_version: stateVersion } : {}),
     ...extra,
   };
   fs.writeFileSync(sentinelPath(kind, key), JSON.stringify(data, null, 2) + '\n');
   return data;
 }
 
-// validate({ issued_at, head_sha, ... }, ttlMs) → { ok: bool, reason: string }
-// Returns ok=true only if both TTL and head_sha (when available) checks pass.
+// validate(sentinel, ttlMs) → { ok: bool, reason: string }
+// Order:
+//   1. TTL freshness.
+//   2. fingerprint match — when sentinel includes one. New shape wins over head_sha.
+//   3. state_version monotonic — when sentinel.state_version + slug+rev present, the
+//      current state.json's version must not have advanced past it.
+//   4. head_sha match (legacy fallback) — only checked when sentinel lacks fingerprint.
 function validate(sentinel, ttlMs) {
   if (!sentinel) return { ok: false, reason: 'no sentinel' };
 
@@ -82,13 +124,42 @@ function validate(sentinel, ttlMs) {
     return { ok: false, reason: `sentinel is ${min}m old (>${ttlMin}m TTL)` };
   }
 
-  const head = gitHeadSha();
-  // If repo is not a git repo (head=null), skip head_sha check (soft-fail like deploy-gate).
-  if (head && sentinel.head_sha && sentinel.head_sha !== head) {
-    return {
-      ok: false,
-      reason: `HEAD moved since approval (approved ${String(sentinel.head_sha).slice(0,7)}, now ${head.slice(0,7)})`,
-    };
+  if (sentinel.fingerprint && fingerprintLib) {
+    let cur = null;
+    try { cur = fingerprintLib.fingerprint(); } catch { cur = null; }
+    if (cur && !fingerprintLib.compare(cur, sentinel.fingerprint)) {
+      return {
+        ok: false,
+        reason: `fingerprint mismatch (approved mode=${sentinel.fingerprint.mode} value=${String(sentinel.fingerprint.value).slice(0, 12)}…, now mode=${cur.mode} value=${String(cur.value).slice(0, 12)}…)`,
+      };
+    }
+  } else {
+    // Legacy fallback — head_sha check only when no fingerprint shape present.
+    const head = gitHeadSha();
+    if (head && sentinel.head_sha && sentinel.head_sha !== head) {
+      return {
+        ok: false,
+        reason: `HEAD moved since approval (approved ${String(sentinel.head_sha).slice(0,7)}, now ${head.slice(0,7)})`,
+      };
+    }
+  }
+
+  if (
+    sentinel.state_version !== undefined && sentinel.state_version !== null
+    && sentinel.slug && sentinel.design_revision && stateStore
+  ) {
+    try {
+      const cur = stateStore.readState(sentinel.slug, sentinel.design_revision);
+      // Sentinel was issued against state.version = X. Allow current X (idempotent
+      // re-validate) but reject if state has advanced (an action mutated state
+      // since the sentinel was issued — the approval is stale).
+      if (cur && typeof cur.version === 'number' && cur.version > sentinel.state_version) {
+        return {
+          ok: false,
+          reason: `state advanced since approval (approved at version ${sentinel.state_version}, now ${cur.version})`,
+        };
+      }
+    } catch { /* state read failure does not block validate — TTL+fingerprint already gated */ }
   }
 
   return { ok: true, reason: 'fresh' };
