@@ -74,8 +74,8 @@ if (!name) {
 // Resolution-log gate: if `## Reviews` section exists, every HIGH/MEDIUM risk
 // must have a resolution line. Library Verdict gate (feature only): every
 // artifact must be classified by sf-design-library-reviewer.
-// Skip via HARNESS_SF_SKIP_RESOLUTION_GATE=1 (legacy) or HARNESS_SF_OVERRIDE='design:<reason>' (PR D).
-let skipResolution = process.env.HARNESS_SF_SKIP_RESOLUTION_GATE === '1';
+// Skip via HARNESS_SF_OVERRIDE='design:<reason>' (PR D/E). Legacy SKIP_* removed.
+let skipResolution = false;
 try {
   const ovr = require('./override');
   ovr.logIfActive('design', 'issue-design-approval');
@@ -88,7 +88,7 @@ if (!skipResolution) {
   const r = spawnSync(process.execPath, validatorArgs, { encoding: 'utf8' });
   if (r.status !== 0) {
     process.stderr.write(`issue-design-approval: design.md fails review/verdict gate:\n${r.stderr || ''}`);
-    process.stderr.write(`\n  Fix '## Review Resolution' / '## Library Verdict' in '${rel}' or set HARNESS_SF_SKIP_RESOLUTION_GATE=1 to bypass.\n`);
+    process.stderr.write(`\n  Fix '## Review Resolution' / '## Library Verdict' in '${rel}' or set HARNESS_SF_OVERRIDE='design:<reason>' (>=8 chars) to bypass.\n`);
     process.exit(1);
   }
 }

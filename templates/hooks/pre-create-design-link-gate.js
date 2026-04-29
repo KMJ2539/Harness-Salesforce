@@ -12,7 +12,7 @@
 //   - Sentinel issuance: skills call _lib/issue-design-approval.js after the 5-persona
 //     review approval gate at Step 1.9.
 //
-// Escape hatch: HARNESS_SF_SKIP_CREATE_GATE=1
+// Escape hatch: HARNESS_SF_OVERRIDE='create:<reason>' (>= 8 non-whitespace chars)
 // Defense-in-depth: pre-write-path-guard.js + pre-modify-approval-gate.js still run alongside.
 
 'use strict';
@@ -54,13 +54,12 @@ function findFreshDesignSentinel() {
 }
 
 (function main() {
-  // PR D — scoped override + audit logging.
-  try { require('./_lib/override').logIfActive('create', 'pre-create-design-link-gate'); } catch { /* non-fatal */ }
-  if (process.env.HARNESS_SF_SKIP_CREATE_GATE === '1') process.exit(0);
+  // PR D/E — scoped override + audit logging. Legacy SKIP_* removed.
   try {
-    const { isActive } = require('./_lib/override');
-    if (isActive('create')) process.exit(0);
-  } catch { /* fall through */ }
+    const ovr = require('./_lib/override');
+    ovr.logIfActive('create', 'pre-create-design-link-gate');
+    if (ovr.isActive('create')) process.exit(0);
+  } catch { /* fall through to normal gate */ }
 
   const raw = readStdin();
   let payload = {};
@@ -89,7 +88,7 @@ function findFreshDesignSentinel() {
       `  design-first flow: enter via /sf-apex, /sf-lwc, /sf-sobject, or /sf-feature and\n` +
       `  complete through Step 1.9 (5-persona review approval) — sentinel is issued automatically.\n` +
       `  Manual: node .claude/hooks/_lib/issue-design-approval.js .harness-sf/designs/{your-design}.md\n` +
-      `  Escape hatch: HARNESS_SF_SKIP_CREATE_GATE=1`
+      `  Escape hatch: HARNESS_SF_OVERRIDE='create:<reason>' (>= 8 chars)`
     );
   }
 

@@ -8,7 +8,7 @@
 // Sentinels are issued by /sf-library-install via _lib/issue-library-approval.js
 // AFTER the install plan has been shown and the user has explicitly approved.
 //
-// Escape hatch: HARNESS_SF_SKIP_LIBRARY_GATE=1
+// Escape hatch: HARNESS_SF_OVERRIDE='library:<reason>' (>= 8 non-whitespace chars)
 
 'use strict';
 const fs = require('fs');
@@ -64,13 +64,12 @@ function keyForIdentifier(method, identifier) {
 }
 
 (function main() {
-  // PR D — scoped override + audit logging.
-  try { require('./_lib/override').logIfActive('library', 'pre-library-install-gate'); } catch { /* non-fatal */ }
-  if (process.env.HARNESS_SF_SKIP_LIBRARY_GATE === '1') process.exit(0);
+  // PR D/E — scoped override + audit logging. Legacy SKIP_* removed.
   try {
-    const { isActive } = require('./_lib/override');
-    if (isActive('library')) process.exit(0);
-  } catch { /* fall through */ }
+    const ovr = require('./_lib/override');
+    ovr.logIfActive('library', 'pre-library-install-gate');
+    if (ovr.isActive('library')) process.exit(0);
+  } catch { /* fall through to normal gate */ }
 
   const raw = readStdin();
   let payload = {};

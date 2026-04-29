@@ -59,46 +59,27 @@ safe(() => {
   design = files[0].f;
 });
 
-// 2b. dispatch-state — prefer canonical .harness-sf/state/<slug>__r<rev>.json
-//      (PR B dual-read). Falls back to legacy .cache/dispatch-state/<slug>.json.
+// 2b. dispatch — read from canonical .harness-sf/state/<slug>__r<rev>.json.
+//      Legacy .cache/dispatch-state/ fallback removed in PR E.
 let currentStep = null;
 let enteredVia = null;
 safe(() => {
   const stateDir = path.join(harnessDir, 'state');
-  if (fs.existsSync(stateDir)) {
-    const files = fs.readdirSync(stateDir)
-      .filter(f => /^[a-z0-9-]+__r\d+\.json$/.test(f))
-      .map(f => ({ f, m: fs.statSync(path.join(stateDir, f)).mtimeMs }))
-      .sort((a, b) => b.m - a.m);
-    if (files.length) {
-      const state = JSON.parse(fs.readFileSync(path.join(stateDir, files[0].f), 'utf8'));
-      if (state && Array.isArray(state.artifacts)) {
-        const total = state.artifacts.length;
-        const done = state.artifacts.filter(a => a.status === 'done').length;
-        const failed = state.artifacts.filter(a => a.status === 'failed').length;
-        dispatchSummary = `${done}/${total}${failed ? `!${failed}` : ''}`;
-        dispatchFailed = failed > 0;
-        if (state.current_step) currentStep = state.current_step;
-        if (state.entered_via) enteredVia = state.entered_via;
-        return; // canonical succeeded — skip legacy
-      }
-    }
-  }
-  // Legacy fallback.
-  const dsDir = path.join(cacheDir, 'dispatch-state');
-  if (!fs.existsSync(dsDir)) return;
-  const files = fs.readdirSync(dsDir)
-    .filter(f => f.endsWith('.json'))
-    .map(f => ({ f, m: fs.statSync(path.join(dsDir, f)).mtimeMs }))
+  if (!fs.existsSync(stateDir)) return;
+  const files = fs.readdirSync(stateDir)
+    .filter(f => /^[a-z0-9-]+__r\d+\.json$/.test(f))
+    .map(f => ({ f, m: fs.statSync(path.join(stateDir, f)).mtimeMs }))
     .sort((a, b) => b.m - a.m);
   if (!files.length) return;
-  const state = JSON.parse(fs.readFileSync(path.join(dsDir, files[0].f), 'utf8'));
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, files[0].f), 'utf8'));
   if (!state || !Array.isArray(state.artifacts)) return;
   const total = state.artifacts.length;
   const done = state.artifacts.filter(a => a.status === 'done').length;
   const failed = state.artifacts.filter(a => a.status === 'failed').length;
   dispatchSummary = `${done}/${total}${failed ? `!${failed}` : ''}`;
   dispatchFailed = failed > 0;
+  if (state.current_step) currentStep = state.current_step;
+  if (state.entered_via) enteredVia = state.entered_via;
 });
 
 // 2c. fallback to design.md scan if no dispatch-state yet

@@ -9,7 +9,7 @@
 //     (TTL 30 min + git HEAD match).
 //   - Sentinels are issued by skills via _lib/issue-modify-approval.js after user confirmation.
 //
-// Escape hatch: HARNESS_SF_SKIP_MODIFY_GATE=1
+// Escape hatch: HARNESS_SF_OVERRIDE='modify:<reason>' (>= 8 non-whitespace chars)
 // Path-prefix policy (pre-write-path-guard.js) still runs alongside.
 
 'use strict';
@@ -38,13 +38,12 @@ function inForceApp(rel) {
 }
 
 (function main() {
-  // PR D — scoped override + audit logging.
-  try { require('./_lib/override').logIfActive('modify', 'pre-modify-approval-gate'); } catch { /* non-fatal */ }
-  if (process.env.HARNESS_SF_SKIP_MODIFY_GATE === '1') process.exit(0);
+  // PR D/E — scoped override + audit logging. Legacy SKIP_* removed.
   try {
-    const { isActive } = require('./_lib/override');
-    if (isActive('modify')) process.exit(0);
-  } catch { /* fall through */ }
+    const ovr = require('./_lib/override');
+    ovr.logIfActive('modify', 'pre-modify-approval-gate');
+    if (ovr.isActive('modify')) process.exit(0);
+  } catch { /* fall through to normal gate */ }
 
   const raw = readStdin();
   let payload = {};

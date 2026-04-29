@@ -1,13 +1,12 @@
 'use strict';
-// Centralized override parser + audit logger — gate-hardening v3.
+// Centralized override parser + audit logger — gate-hardening v3 (PR E final).
 //
 // Single env var: HARNESS_SF_OVERRIDE='<scope>:<reason>'
 //   scope ∈ { create, modify, design, deploy, library, all }
 //   reason: free text, >= 8 non-whitespace chars
 //
-// Legacy SKIP_* vars are still honored with a deprecation warning so users
-// don't get blocked, but every override use (legacy or new) writes an audit
-// line. Removal of legacy vars is the SKIP_* deprecation step.
+// Legacy HARNESS_SF_SKIP_* vars are detected and rejected with a clear error
+// pointing to the new syntax. They no longer bypass any gate.
 //
 // API:
 //   isActive(scope) → boolean — true iff a valid override targets this scope.
@@ -18,16 +17,31 @@ const audit = require('./audit');
 
 const VALID_SCOPES = new Set(['create', 'modify', 'design', 'deploy', 'library', 'all']);
 
-const LEGACY_SKIP_TO_SCOPE = {
-  HARNESS_SF_SKIP_CREATE_GATE: 'create',
-  HARNESS_SF_SKIP_MODIFY_GATE: 'modify',
-  HARNESS_SF_SKIP_DEPLOY_GATE: 'deploy',
-  HARNESS_SF_SKIP_LIBRARY_GATE: 'library',
-  HARNESS_SF_SKIP_RESOLUTION_GATE: 'design',
-  HARNESS_SF_SKIP_FEATURE_GATE: 'all',
-};
+const REMOVED_LEGACY_VARS = [
+  'HARNESS_SF_SKIP_CREATE_GATE',
+  'HARNESS_SF_SKIP_MODIFY_GATE',
+  'HARNESS_SF_SKIP_DEPLOY_GATE',
+  'HARNESS_SF_SKIP_LIBRARY_GATE',
+  'HARNESS_SF_SKIP_RESOLUTION_GATE',
+  'HARNESS_SF_SKIP_FEATURE_GATE',
+];
 
 const _logged = new Set();
+let _legacyWarned = false;
+
+function warnLegacyIfPresent() {
+  if (_legacyWarned) return;
+  for (const env of REMOVED_LEGACY_VARS) {
+    if (process.env[env] === '1') {
+      process.stderr.write(
+        `[harness-sf] ${env}=1 is REMOVED. Use HARNESS_SF_OVERRIDE='<scope>:<reason>' ` +
+        `where scope ∈ {${[...VALID_SCOPES].join(',')}} and reason has >= 8 non-whitespace chars.\n`
+      );
+      _legacyWarned = true;
+      return;
+    }
+  }
+}
 
 function parseOverride() {
   const raw = process.env.HARNESS_SF_OVERRIDE;
@@ -45,40 +59,19 @@ function parseOverride() {
   return { scope, reason };
 }
 
-function legacySkipActive() {
-  for (const [env, scope] of Object.entries(LEGACY_SKIP_TO_SCOPE)) {
-    if (process.env[env] === '1') return { env, scope };
-  }
-  return null;
-}
-
 function isActive(targetScope) {
+  warnLegacyIfPresent();
   const ovr = parseOverride();
   if (ovr && !ovr.error) {
     return ovr.scope === 'all' || ovr.scope === targetScope;
   }
-  const legacy = legacySkipActive();
-  if (legacy) return legacy.scope === 'all' || legacy.scope === targetScope;
   return false;
 }
 
-// Returns null if no override active. Returns { source, scope, reason, error? }
-// describing what's in effect.
+// Returns null if no override active. Returns { scope, reason } describing what's in effect.
 function describe() {
   const ovr = parseOverride();
-  if (ovr) {
-    if (ovr.error) return { source: 'env-malformed', error: ovr.error };
-    return { source: 'HARNESS_SF_OVERRIDE', scope: ovr.scope, reason: ovr.reason };
-  }
-  const legacy = legacySkipActive();
-  if (legacy) {
-    return {
-      source: legacy.env,
-      scope: legacy.scope,
-      reason: `legacy skip flag (${legacy.env}=1) — migrate to HARNESS_SF_OVERRIDE='${legacy.scope}:<reason>' (>=8 chars)`,
-      deprecated: true,
-    };
-  }
+  if (ovr && !ovr.error) return { scope: ovr.scope, reason: ovr.reason };
   return null;
 }
 
@@ -86,24 +79,19 @@ function describe() {
 function logIfActive(targetScope, gate, opts = {}) {
   if (!isActive(targetScope)) return null;
   const desc = describe();
-  if (!desc || desc.error) return null;
+  if (!desc) return null;
   const key = `${gate}|${desc.scope}`;
   if (_logged.has(key)) return null;
   _logged.add(key);
   try {
-    const entry = audit.append({
+    return audit.append({
       gate,
       slug: opts.slug || '',
       scope: desc.scope,
       reason: desc.reason,
       session_id: process.env.CLAUDE_SESSION_ID || '',
     });
-    if (desc.deprecated) {
-      process.stderr.write(`[harness-sf] override: ${desc.source} is deprecated. ${desc.reason}\n`);
-    }
-    return entry;
   } catch (e) {
-    // audit.append rejected (e.g. reason too short for legacy synthesized message).
     process.stderr.write(`[harness-sf] override audit failed: ${e.message}\n`);
     return null;
   }
