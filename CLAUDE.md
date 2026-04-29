@@ -46,7 +46,7 @@ Skill set: `/sf-feature` (composite-module orchestrator) + 5 artifact-level skil
 ## Output budgets (non-negotiable)
 
 - **Body cap**: 80 lines of agent **runtime output** (assistant transcript), enforced by `stop-reviewer-validate.js` and `stop-analyzer-validate.js`. The cap targets emitted bodies, not the prompt definition files in `templates/agents/*.md` (those are unbounded — e.g. `sf-deploy-validator.md` is 200+ lines and that is fine).
-- **Detail dump**: Analyzers/Writers Write full detail to `.harness-sf/reports/{agent-name}/{slug}-{YYYYMMDD-HHMMSS}.md`. Body ends with `상세: {경로}`.
+- **Detail dump**: Analyzers/Writers Write full detail to `.harness-sf/reports/{agent-name}/{slug}-{YYYYMMDD-HHMMSS}.md`. Body ends with `Details: {path}`.
 - **Path-prefix enforcement**: prompt-level guidance is mirrored by `pre-write-path-guard.js`. `CLAUDE_AGENT` env determines allowed prefixes. Reviewer overflow handled by `stop-reviewer-validate.js` (block on `block` verdict or >80 lines).
 
 ## Mechanism layer
@@ -68,7 +68,7 @@ When extending: evaluate any new enforcement as "is this a hook, or just a promp
 
 Each artifact-level skill supports a **delegated mode**: when invoked by `/sf-feature` with a feature design.md path + artifact ID, it skips its own Step 1~1.9 (intent / design / review) and runs only Step 2 onwards (`sf-context-explorer` + create/modify + tests). Updates the artifact's `status: pending → done` in the feature design.md on completion. Review effort is O(1) per feature, not O(N) per artifact.
 
-When extending: any new artifact-level skill must implement `Step 0: 호출 모드 판별` and honor the delegated contract.
+When extending: any new artifact-level skill must implement `Step 0: invocation-mode discrimination` and honor the delegated contract.
 
 The delegated contract is **sentinel-verified**, not prompt-trusted: `/sf-feature` Step 6 issues a per-artifact `delegated-mode` token via `_lib/issue-delegated-token.js`, and the sub-skill's Step 0 calls `_lib/check-delegated-token.js` to verify before branching. No token → standalone fallback. Dispatch progress lives in `.harness-sf/.cache/dispatch-state/<feature-slug>.json` (managed by `_lib/dispatch-state-cli.js`) so the orchestrator can resume after session loss and `statusline.js` can show real progress. Pre-Step-4 `_lib/validate-design.js` gates malformed design.md (frontmatter, artifact id uniqueness, DAG, declared-vs-actual count) out of the review/dispatch pipeline.
 
@@ -78,7 +78,7 @@ Design-first flow details (intent battery, recommend+business-first confirmation
 
 ## Ensure-mode invariants
 
-Encoded across all five artifact-level skills in `Step 2.5: 모드 결정 (CREATE vs MODIFY)`. Preserve:
+Encoded across all five artifact-level skills in `Step 2.5: mode decision (CREATE vs MODIFY)`. Preserve:
 
 - **Detect first** — Glob the target path before any write.
 - **Approval gate before write** — MODIFY mode never overwrites silently. Show diff plan + require user confirmation.
@@ -97,7 +97,7 @@ Encoded across all five artifact-level skills in `Step 2.5: 모드 결정 (CREAT
 
 ## Authoring conventions
 
-- **Korean prose, English identifiers.** Agent/skill bodies in Korean; Salesforce API names, paths, code stay original.
+- **English prose, English identifiers.** Agent/skill bodies are written in English; Salesforce API names, paths, code stay original.
 - **Don't remove output caps** — they prevent context explosion in the orchestrator.
 - **No hallucination** — agents enumerate "unknown areas" rather than guess metadata.
 - **Security defaults baked in** — generated Apex must use `with sharing`, FLS/CRUD checks, escaped dynamic SOQL, no hardcoded IDs. Object/field skills never touch profiles.

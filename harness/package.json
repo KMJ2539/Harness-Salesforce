@@ -2,7 +2,7 @@
   "name": "@harness-sf/harness",
   "version": "0.1.0",
   "private": true,
-  "description": "harness-sf 측정/검증 인프라 — installer 와 격리된 별도 패키지",
+  "description": "harness-sf measurement & verification infrastructure — a separate package isolated from the installer",
   "type": "module",
   "scripts": {
     "test": "vitest run",

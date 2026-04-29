@@ -46,9 +46,9 @@ describe("normalize", () => {
     expect(normalize("Authorization: Bearer abc.DEF")).toContain("<BEARER>");
   });
 
-  it("does NOT alter korean particles or synonyms (drift signal)", () => {
-    expect(normalize("결과는 안전하다")).toBe("결과는 안전하다");
-    expect(normalize("결과가 안전합니다")).toBe("결과가 안전합니다");
+  it("does NOT alter wording or synonyms (drift signal)", () => {
+    expect(normalize("the result is safe")).toBe("the result is safe");
+    expect(normalize("the result is secure")).toBe("the result is secure");
   });
 
   it("is idempotent", () => {

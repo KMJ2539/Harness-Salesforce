@@ -1,15 +1,15 @@
 # Apex Test Patterns
 
-레퍼런스: 테스트 클래스 작성/리뷰 시 Read.
+Reference: Read when authoring/reviewing test classes.
 
-## 커버리지 정책
+## Coverage policy
 
-- Org 전체 75% 최소 (production deploy 게이트).
-- 트리거: 1% 이상 (실질적으로 100% 필수).
-- 변경된 클래스 단위로도 75% 권장 (deploy-validator에서 강제).
-- **Coverage ≠ Quality**: assertion 없는 execution-only 테스트 금지.
+- Org-wide 75% minimum (production deploy gate).
+- Triggers: 1%+ (in practice 100% required).
+- 75% per changed class also recommended (enforced by deploy-validator).
+- **Coverage != Quality**: execution-only tests without assertions are forbidden.
 
-## 테스트 구조
+## Test structure
 
 ```apex
 @isTest(SeeAllData=false)
@@ -17,7 +17,7 @@ private class AccountServiceTest {
 
     @TestSetup
     static void setup() {
-        // 모든 테스트 공통 데이터. context별 1회 실행.
+        // Shared data for all tests. Runs once per context.
         TestDataFactory.createAccountsWithContacts(200);
     }
 
@@ -57,26 +57,26 @@ private class AccountServiceTest {
 }
 ```
 
-## 필수 케이스
+## Required cases
 
-| 카테고리 | 예 |
+| Category | Example |
 |---|---|
 | Positive | happy path, 1 record |
-| Bulk | 200 records (트리거/batch 한도 검증) |
-| Negative | null, empty, 잘못된 ID, 권한 없음 |
-| Boundary | 0 records, 정확히 한도 (200, 10K) |
-| Async | `Test.startTest()`/`stopTest()` 내부 호출 |
+| Bulk | 200 records (validates trigger/batch limits) |
+| Negative | null, empty, invalid ID, no permission |
+| Boundary | 0 records, exactly at the limit (200, 10K) |
+| Async | invoked inside `Test.startTest()`/`stopTest()` |
 | Permission | `System.runAs(restrictedUser)` |
-| FLS | restricted user에서 stripInaccessible 결과 검증 |
+| FLS | verify stripInaccessible result under restricted user |
 
-## 안티패턴
+## Anti-patterns
 
-- `SeeAllData=true` (격리 깨짐, 빌드 환경 의존)
-- `@TestVisible` 남용 (private 의도 우회)
-- assertion 없이 execute만
-- hardcoded ID
-- 같은 테스트에서 100+ DML (governor 한도와 무관한 slowness)
-- mock 없이 callout (실제 콜아웃은 `Test.setMock(HttpCalloutMock.class, ...)` 필수)
+- `SeeAllData=true` (breaks isolation, depends on build environment)
+- Overuse of `@TestVisible` (bypasses private intent)
+- Execute-only without assertions
+- Hardcoded ID
+- 100+ DML in a single test (slowness unrelated to governor limits)
+- Callouts without mocks (real callouts require `Test.setMock(HttpCalloutMock.class, ...)`)
 
 ## Mocking
 
@@ -85,9 +85,9 @@ Test.setMock(HttpCalloutMock.class, new MockHttpResponseGenerator());
 Test.setMock(WebServiceMock.class, new SoapMock());
 ```
 
-DML/SOQL은 mock 없음 — 실제 데이터로 테스트 (TestDataFactory).
+DML/SOQL have no mocks — test against real data (TestDataFactory).
 
-## 관련 토픽
+## Related topics
 
-- governor-limits.md (bulk test 한도)
-- sharing-fls-crud.md (permission test)
+- governor-limits.md (bulk test limits)
+- sharing-fls-crud.md (permission tests)

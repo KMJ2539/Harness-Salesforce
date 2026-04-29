@@ -1,49 +1,49 @@
 ---
 name: sf-field
-description: SObject(표준/커스텀)에 필드를 추가하거나 수정(ensure 시맨틱). 같은 API name 필드가 없으면 생성, 있으면 diff 승인 후 수정. 모든 필드 타입 지원(Text, Number, Picklist, Lookup, Master-Detail, Formula, Roll-up Summary 등). 추가/변경 전 sf-context-explorer로 객체 영향 분석. "필드 추가", "Account.Status 라벨 변경", "picklist 값 추가", "Lookup 필드 생성" 같은 요청 시 사용.
+description: Add or modify fields on an SObject (standard/custom) with ensure semantics. Create if no field with the same API name exists, modify after diff approval if it does. Supports every field type (Text, Number, Picklist, Lookup, Master-Detail, Formula, Roll-up Summary, etc.). Run sf-context-explorer for impact analysis before changes. Use for requests like "add a field", "change Account.Status label", "add a picklist value", "create a Lookup field".
 ---
 
 # /sf-field
 
-SObject 필드를 **ensure 모드**로 다룸 — 같은 API name이 없으면 생성, 있으면 수정. 표준 객체와 커스텀 객체 모두 지원.
+Handle SObject fields in **ensure mode** — create if no field with the same API name exists, modify if it does. Supports both standard and custom objects.
 
-## Step 0: 호출 모드 판별
+## Step 0: Invocation mode detection
 
-호출자(`/sf-feature` 등)가 feature design.md 경로 + artifact ID 를 전달하면 **delegated 모드 후보**. sentinel 로 검증:
+If the caller (`/sf-feature`, etc.) passes a feature design.md path + artifact ID, this is a **delegated mode candidate**. Verify with the sentinel:
 ```bash
 node .claude/hooks/_lib/check-delegated-token.js <design-md-path> <artifact-id>
 ```
-exit 0 → delegated 모드 확정 (design.md 의 해당 field artifact 섹션 — 객체, API name, 타입, 길이/picklist 값 등 — 로드 후 Step 1 의 질문 배터리 건너뛰고 Step 2 컨텍스트 분석부터 실행, 완료/실패 시 호출자가 dispatch-state-cli 로 status 갱신).
-exit 1 → standalone 모드 (아래 Step 0.3 부터).
+exit 0 → delegated mode confirmed (load the matching field artifact section in design.md — object, API name, type, length/picklist values, etc. — skip the Step 1 question battery and start from Step 2 context analysis; on completion/failure the caller updates status via dispatch-state-cli).
+exit 1 → standalone mode (start from Step 0.3 below).
 
-## Step 0.3: feature 컨텍스트 게이트 (standalone 진입 시 필수)
+## Step 0.3: Feature context gate (required when entering standalone)
 
 ```bash
 node .claude/hooks/_lib/check-feature-context.js
 ```
 
-`has_active_feature: true` 이고 type=`field` pending artifact 존재 시 AskUserQuestion 으로 redirect 제안: `[r]` `/sf-feature` / `[s]` 사유 입력 후 stub (`type: field, standalone_override: true`) / `[a]` abort. 매칭 없으면 통과. bypass: `HARNESS_SF_SKIP_FEATURE_GATE=1`.
+If `has_active_feature: true` and a pending artifact of type=`field` exists, propose a redirect via AskUserQuestion: `[r]` `/sf-feature` / `[s]` reason then stub (`type: field, standalone_override: true`) / `[a]` abort. If no match, pass through. Bypass: `HARNESS_SF_SKIP_FEATURE_GATE=1`.
 
-## Step 1: 의도 명확화
+## Step 1: Intent clarification
 
-**필수 정보**
-- 대상 객체 (예: `Account`, `Order__c`)
-- 라벨 (한국어 OK)
-- API name (자동 제안: 라벨에서 변환, `__c` suffix는 자동)
-- 필드 타입 (아래 목록)
-- 설명 (description)
-- Help text (사용자에게 보일 도움말)
-- Required 여부
-- Unique 여부 (해당 시)
-- External ID 여부 (해당 시)
+**Required information**
+- Target object (e.g. `Account`, `Order__c`)
+- Label (Korean OK)
+- API name (auto-suggest: derived from label, `__c` suffix is automatic)
+- Field type (see list below)
+- Description
+- Help text (shown to users)
+- Required?
+- Unique? (where applicable)
+- External ID? (where applicable)
 
-**필드 타입 목록**
-| 타입 | 추가 정보 |
+**Field type list**
+| Type | Extra info |
 |---|---|
-| Text | length (최대 255) |
-| Long Text Area | length (최대 131,072), 보이는 줄 수 |
-| Rich Text Area | length, 줄 수 |
-| Text Area | (멀티라인, 255 고정) |
+| Text | length (max 255) |
+| Long Text Area | length (max 131,072), visible lines |
+| Rich Text Area | length, lines |
+| Text Area | (multi-line, fixed 255) |
 | Email | — |
 | Phone | — |
 | URL | — |
@@ -57,7 +57,7 @@ node .claude/hooks/_lib/check-feature-context.js
 | Picklist | values, restricted, controlling field |
 | Multi-Select Picklist | values, visible lines |
 | Lookup | referenceTo, deleteConstraint (SetNull/Restrict/Cascade) |
-| Master-Detail | referenceTo, sharing 설정, reparenting |
+| Master-Detail | referenceTo, sharing settings, reparenting |
 | External Lookup | external object |
 | Formula | returnType, formula expression |
 | Roll-up Summary | summarizedField, aggregation, filter |
@@ -65,66 +65,66 @@ node .claude/hooks/_lib/check-feature-context.js
 | Geolocation | scale, displayLocationInDecimal |
 | Encrypted Text | maskType, length |
 
-## Step 2: 컨텍스트 분석 (필수)
+## Step 2: Context analysis (required)
 
-**`Agent` 툴로 `sf-context-explorer` 호출** — 객체와 필드 변경 의도 전달.
+**Invoke `sf-context-explorer` via the `Agent` tool** — pass the object and the field-change intent.
 
-특히 다음 영향 영역 확인:
-- 객체에 작동하는 트리거/Flow가 이 필드를 참조하게 될지
-- Validation Rule 추가 필요한지
-- 페이지 레이아웃, 검색 레이아웃, list view 추가 필요
-- Permission Set FLS 부여 필요
-- Report Type 갱신 필요
-- LWC/Aura에서 이 객체 사용 중이라면 import 추가 필요
+Specifically check the following impact areas:
+- Whether triggers/Flows on the object will reference this field
+- Whether Validation Rules need to be added
+- Whether page layouts, search layouts, list views need updating
+- Whether Permission Set FLS grants are needed
+- Whether Report Types need updating
+- If LWC/Aura uses this object, additional imports needed
 
-⚠️ **표준 객체에 추가 시**: 강한 경고. 표준 필드와 충돌 없는지 확인.
+⚠️ **When adding to a standard object**: strong warning. Confirm no conflict with standard fields.
 
-## Step 2.5: 모드 결정 (CREATE vs MODIFY)
+## Step 2.5: Mode decision (CREATE vs MODIFY)
 
-`Glob force-app/main/default/objects/{ObjectApiName}/fields/{FieldApiName}.field-meta.xml` 로 필드 파일 존재 여부 확인:
+Check whether the field file exists via `Glob force-app/main/default/objects/{ObjectApiName}/fields/{FieldApiName}.field-meta.xml`:
 
-**없음 → CREATE 모드**: Step 3 이후 진행.
+**Absent → CREATE mode**: continue from Step 3.
 
-**있음 → MODIFY 모드**:
-1. 기존 `.field-meta.xml` 을 `Read`.
-2. 다음 변경은 **데이터 영향이 큼 — 강한 경고 + 명시 승인 필요**:
-   - `type` 변경 (예: Text → Picklist, Number → Currency) — 기존 데이터 손실/변환 위험
-   - `length` 축소 (잘림) / `precision`·`scale` 축소
-   - `required` false → true (기존 NULL 레코드 깨짐)
-   - `unique` false → true (중복 레코드 있으면 실패)
-   - Master-Detail 의 `referenceTo` 변경 (재부모화 정책)
-   - Picklist `restricted` true 로 전환 (기존 값 정합 확인 필요)
-   - Picklist 값 삭제 (기존 레코드의 값이 inactive 처리됨)
-3. 다음은 안전한 변경:
-   - `label`, `description`, `inlineHelpText` 갱신
-   - Picklist 값 **추가** (삭제 아님)
-   - `length` 확장, `precision` 확장
-4. **사용자 승인 게이트**: 변경 항목별 위험도와 diff → 확정 후 쓰기.
-5. **승인 sentinel 발급 (필수)**: 사용자 승인 응답 직후, Edit/Write 직전에 발급:
+**Present → MODIFY mode**:
+1. `Read` the existing `.field-meta.xml`.
+2. The following changes have **large data impact — strong warning + explicit approval required**:
+   - `type` change (e.g. Text → Picklist, Number → Currency) — risk of data loss/conversion
+   - `length` shrink (truncation) / `precision`·`scale` shrink
+   - `required` false → true (existing NULL records break)
+   - `unique` false → true (fails if duplicates exist)
+   - Master-Detail `referenceTo` change (reparenting policy)
+   - Switching Picklist `restricted` to true (must verify existing values comply)
+   - Picklist value deletion (existing records' values become inactive)
+3. The following are safe changes:
+   - `label`, `description`, `inlineHelpText` updates
+   - Picklist value **additions** (not deletions)
+   - `length` expansion, `precision` expansion
+4. **User approval gate**: present per-item risk and diff → confirm before write.
+5. **Issue approval sentinel (required)**: immediately after the user's approval, and before Edit/Write, issue:
    ```bash
    node .claude/hooks/_lib/issue-modify-approval.js force-app/.../objects/{ObjectApiName}/fields/{FieldApiName}.field-meta.xml
    ```
-   `pre-modify-approval-gate.js` hook이 sentinel 없으면 차단함 (TTL 30분 + git HEAD 매칭). 사용자 승인 없이 sentinel만 발급하는 것은 정책 위반.
-6. 이 필드를 참조하는 LWC/Apex/Flow/Validation Rule(Step 2 결과) 영향 재평가.
+   The `pre-modify-approval-gate.js` hook blocks without a sentinel (TTL 30 min + git HEAD match). Issuing a sentinel without user approval is a policy violation.
+6. Re-evaluate impact on LWC/Apex/Flow/Validation Rule that reference this field (Step 2 results).
 
-## Step 3: 필드 메타데이터 생성
+## Step 3: Generate field metadata
 
 **`force-app/main/default/objects/{ObjectApiName}/fields/{FieldApiName}.field-meta.xml`**
 
-타입별 예시:
+Examples by type:
 
 **Text**
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Status__c</fullName>
-    <label>상태</label>
+    <label>Status</label>
     <type>Text</type>
     <length>50</length>
     <required>false</required>
     <unique>false</unique>
-    <description>현재 상태</description>
-    <inlineHelpText>레코드의 현재 상태를 입력하세요</inlineHelpText>
+    <description>Current status</description>
+    <inlineHelpText>Enter the current status of this record</inlineHelpText>
 </CustomField>
 ```
 
@@ -138,23 +138,23 @@ node .claude/hooks/_lib/check-feature-context.js
         <value>
             <fullName>Active</fullName>
             <default>true</default>
-            <label>활성</label>
+            <label>Active</label>
         </value>
         <value>
             <fullName>Inactive</fullName>
             <default>false</default>
-            <label>비활성</label>
+            <label>Inactive</label>
         </value>
     </valueSetDefinition>
 </valueSet>
 ```
-**권장**: Global Value Set 분리 (재사용 가능).
+**Recommended**: separate Global Value Set (reusable).
 
 **Lookup**
 ```xml
 <type>Lookup</type>
 <referenceTo>Contact</referenceTo>
-<relationshipLabel>주문</relationshipLabel>
+<relationshipLabel>Orders</relationshipLabel>
 <relationshipName>Orders</relationshipName>
 <deleteConstraint>SetNull</deleteConstraint>
 ```
@@ -163,21 +163,21 @@ node .claude/hooks/_lib/check-feature-context.js
 ```xml
 <type>MasterDetail</type>
 <referenceTo>Account</referenceTo>
-<relationshipLabel>주문</relationshipLabel>
+<relationshipLabel>Orders</relationshipLabel>
 <relationshipName>Orders</relationshipName>
 <reparentableMasterDetail>false</reparentableMasterDetail>
 <writeRequiresMasterRead>false</writeRequiresMasterRead>
 ```
-⚠️ Master-Detail 추가 시: 자식 객체의 sharing model이 "Controlled by Parent"가 됨. 기존 데이터 영향 경고.
+⚠️ Adding Master-Detail: child sharing model becomes "Controlled by Parent". Warn about impact on existing data.
 
 **Formula**
 ```xml
-<type>Text</type>  <!-- 또는 returnType -->
+<type>Text</type>  <!-- or returnType -->
 <formula>IF(ISBLANK(Status__c), "Unknown", Status__c)</formula>
 <formulaTreatBlanksAs>BlankAsBlank</formulaTreatBlanksAs>
 ```
 
-**Roll-up Summary** (Master-Detail 자식에 한해)
+**Roll-up Summary** (only on Master-Detail children)
 ```xml
 <type>Summary</type>
 <summarizedField>Order__c.Amount__c</summarizedField>
@@ -185,46 +185,46 @@ node .claude/hooks/_lib/check-feature-context.js
 <summaryOperation>sum</summaryOperation>
 ```
 
-## Step 4: 권한 부여 가이드
+## Step 4: Permission grant guidance
 
-필드만 만들고 FLS는 분리 — **Permission Set 갱신 권유**:
+The skill creates only the field — separate FLS — **recommend updating a Permission Set**:
 ```xml
-<!-- PermissionSet 파일에 추가 -->
+<!-- Add to PermissionSet file -->
 <fieldPermissions>
     <field>ObjectApiName.FieldApiName__c</field>
     <readable>true</readable>
     <editable>true</editable>
 </fieldPermissions>
 ```
-대상 PS 사용자에게 묻고, 자동 갱신 또는 수동 안내.
+Ask which PS users to target, then auto-update or guide manually.
 
-## Step 5: 영향 영역 후속 권장
-context-explorer 결과 기반으로:
+## Step 5: Follow-up impact recommendations
+Based on context-explorer results:
 
-- 트리거가 이 필드 활용하면 → "트리거 수정 필요. `/sf-apex` 또는 직접 편집"
-- Flow 수정 필요하면 → "Flow Builder UI 또는 메타데이터 직접 편집"
-- LWC schema import 추가 필요 → 해당 컴포넌트 list 보고
-- Page Layout/Lightning Page에 노출하려면 → 별도 작업 필요
-- Report Type 사용자 정의 필드 노출 필요 시 → 안내
+- If a trigger uses this field → "trigger modification required. Use `/sf-apex` or edit directly"
+- If a Flow needs updating → "Flow Builder UI or direct metadata edit"
+- If LWC schema imports must be added → list affected components
+- For Page Layout / Lightning Page exposure → separate work needed
+- For Report Type custom field exposure → guide
 
-## Step 6: 보고
-- 생성 파일 (path)
-- 필드 정보 요약
-- 영향 영역 인벤토리 (context-explorer 결과)
-- 권장 후속 작업 (1~5번 우선순위)
+## Step 6: Report
+- Created files (path)
+- Field info summary
+- Impact-area inventory (context-explorer results)
+- Recommended follow-ups (priority 1–5)
 
-## AskUserQuestion 정책
-- 대상 객체, 라벨, 필드 타입 (필수)
-- 타입별 추가 파라미터 (length, picklist values 등)
+## AskUserQuestion policy
+- Target object, label, field type (required)
+- Type-specific extra parameters (length, picklist values, etc.)
 - Required, Unique, External ID
-- description, help text — 명시 권장 (관리성)
+- description, help text — explicit values recommended (manageability)
 
-## 안티패턴 거부
-- description 없이 생성 거부 — 미래의 디버깅 비용
-- Picklist에 unrestricted + 다수 사용자 입력 조합 거부 (data quality 폭망)
-- Master-Detail 추가 시 기존 데이터 있으면 강한 경고
-- 표준 객체 필드 추가 시 sharing/profile 영향 명시
+## Antipattern rejection
+- Reject creation without description — debugging cost in the future
+- Reject Picklist unrestricted + many user-input combination (data quality disaster)
+- Strong warning when adding Master-Detail with existing data
+- When adding to a standard object, explicitly call out sharing/profile impact
 
-## 산출물 위치
+## Artifact locations
 - `force-app/main/default/objects/{ObjectApiName}/fields/{FieldApiName}.field-meta.xml`
-- (옵션) PermissionSet 갱신
+- (optional) PermissionSet update

@@ -27,7 +27,7 @@
 //     entry under `## Review Resolution` matching `\bH<n>\b`.
 //   - every `[M<n>]` (MEDIUM risk) ID must also have at least a 1-line response.
 //   - resolution entries should have ≥ 8 chars of text after the ID (anti-rubber-stamp
-//     heuristic). Empty / "ok" / "수용" 1단어는 R2 risk 로 fail.
+//     heuristic). Empty / "ok" / single-word acks fail as R2 risk.
 //   - missing `## Review Resolution` section while `## Reviews` exists → fail.
 //
 // Checks (--check-library-verdict, gated on type === 'feature' and `## Reviews` existing):
@@ -203,7 +203,7 @@ function parseReviewRisks(reviewsSection) {
 function parseResolution(resolutionSection) {
   if (!resolutionSection) return new Map();
   const out = new Map();
-  // Match lines like "- H1: 어쩌고저쩌고" or "* M2: response text"
+  // Match lines like "- H1: response text" or "* M2: response text"
   const lineRe = /^\s*[-*]\s*([HMLhml])(\d+)\s*[:\-]\s*(.+?)\s*$/gm;
   let m;
   while ((m = lineRe.exec(resolutionSection)) !== null) {

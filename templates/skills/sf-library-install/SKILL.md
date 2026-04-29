@@ -1,181 +1,181 @@
 ---
 name: sf-library-install
-description: Salesforce 프로젝트에 외부 라이브러리/패키지를 안전하게 설치. 5가지 방식(Managed/Unlocked Package / Source Vendoring / Git Submodule / npm devDependency / Static Resource) 중 입력 단서로 자동 추정 또는 사용자 선택. 설치 전 plan 승인 게이트, 설치 후 인벤토리 재검증 + decisions.md 기록. design-first skill 의 ## Decisions 가 라이브러리 도입을 명시했을 때 호출되거나, 사용자가 직접 호출. "fflib 설치", "TriggerHandler 도입", "Nebula Logger install", "이 패키지 깔아줘" 같은 요청 시 사용.
+description: Safely install external libraries/packages into a Salesforce project. Auto-infers (or asks for) one of 5 methods (Managed/Unlocked Package / Source Vendoring / Git Submodule / npm devDependency / Static Resource). Plan-approval gate before install, inventory re-verification + decisions.md record after install. Invoked when a design-first skill's ## Decisions specifies a library adoption, or directly by the user. Use for requests like "install fflib", "adopt TriggerHandler", "install Nebula Logger", "install this package".
 ---
 
 # /sf-library-install
 
-Salesforce 프로젝트에 라이브러리/패키지를 추가하는 ensure-mode skill. **Iron Law: 인벤토리에 이미 있으면 install 안 함, 사용자가 명시 입력하지 않은 식별자(04t/git URL/npm명/CDN URL)는 추측 금지.**
+Ensure-mode skill that adds libraries/packages to a Salesforce project. **Iron Law: do not install if already in inventory; never guess identifiers (04t / git URL / npm name / CDN URL) the user did not explicitly provide.**
 
 ## Iron Laws
 
-1. **추측 금지** — 04t 패키지 ID, git URL, npm 패키지명, CDN URL 은 **사용자가 입력하거나 design.md 에 명시한 것만** 사용. skill 이 검색해서 찾아오는 행위 금지.
-2. **plan dump 필수** — 모든 외부 호출(network / filesystem / org deploy)은 plan 단계에서 명시하고 사용자 승인 후 실행.
-3. **production org 보호** — 대상 org 가 production 이면 강한 확인 게이트. default 는 abort.
-4. **충돌 abort** — 같은 namespace prefix 또는 같은 클래스명이 이미 있으면 abort, reuse 권유.
-5. **부분 실패 시 rollback 안 함** — 이미 한 작업은 보존하고 사용자에게 명시. 사용자가 직접 정리 결정.
+1. **No guessing** — 04t package IDs, git URLs, npm package names, CDN URLs must come from **explicit user input or design.md**. The skill is forbidden from searching for them.
+2. **Plan dump required** — every external call (network / filesystem / org deploy) must be stated in the plan and run only after user approval.
+3. **Production org protection** — strong confirmation gate when targeting production. Default is abort.
+4. **Conflict abort** — abort if the same namespace prefix or same class name already exists; recommend reuse.
+5. **No rollback on partial failure** — preserve completed steps and tell the user explicitly. The user decides cleanup.
 
-## Step 0: 호출 모드 판별
+## Step 0: Invocation mode detection
 
-- **delegated 모드**: 호출자가 design.md 경로 + 라이브러리명 전달 (`/sf-apex`, `/sf-lwc`, `/sf-sobject`, `/sf-feature` 의 Step 1.9 후속). design.md 의 `## Decisions` 에서 도입 결정된 라이브러리만 처리.
-- **standalone 모드**: 사용자가 직접 호출. 라이브러리명 + (선택) 식별자 인자.
+- **Delegated mode**: caller passes design.md path + library names (follow-up to Step 1.9 of `/sf-apex`, `/sf-lwc`, `/sf-sobject`, `/sf-feature`). Process only libraries marked for adoption in design.md `## Decisions`.
+- **Standalone mode**: invoked directly by the user. Library name + (optional) identifier as args.
 
-## Step 1: 대상 라이브러리 식별
+## Step 1: Identify target libraries
 
-### delegated 모드
-1. design.md 를 `Read`.
-2. `## Decisions` 섹션에서 "도입(adopt)" 으로 표기된 라이브러리 추출. 형식 예:
+### Delegated mode
+1. `Read` design.md.
+2. Extract libraries marked "adopt" in `## Decisions`. Example format:
    ```
-   - 라이브러리: TriggerHandler — 도입 (방식 미정)
-   - 라이브러리: Nebula Logger 04t5Y0000027FQ7QAM — 도입 (방식 A)
+   - Library: TriggerHandler — adopt (method TBD)
+   - Library: Nebula Logger 04t5Y0000027FQ7QAM — adopt (method A)
    ```
-3. 추출된 라이브러리 목록 + 사용자에게 확정 질문 (1개씩 또는 batch).
+3. Confirm extracted list with the user (one by one or batch).
 
-### standalone 모드
-사용자에게 AskUserQuestion 으로 다음 입력:
-- 라이브러리 이름 (자유 텍스트, 식별용)
-- 식별자 (있으면): 04t ID / git URL / npm 패키지명 / CDN URL / 없음
-- 대상 위치 힌트 (있으면): "force-app/main/default/classes/framework/" 같은 경로
+### Standalone mode
+Collect via AskUserQuestion:
+- Library name (free text, identifier-only)
+- Identifier (if any): 04t ID / git URL / npm package name / CDN URL / none
+- Target location hint (if any): a path like "force-app/main/default/classes/framework/"
 
-## Step 2: 인벤토리 충돌 체크 (필수, install 전)
+## Step 2: Inventory conflict check (required, before install)
 
-**`Glob` + `Grep` 으로 다음을 직접 확인** — 추측 금지.
+**Verify directly with `Glob` + `Grep`** — no guessing.
 
-| 검사 | 명령 |
+| Check | Command |
 |---|---|
-| 같은 클래스명 존재 | `Glob force-app/**/{LibClassName}.cls` |
-| 같은 namespace prefix 사용 | `Grep "<ns>__" force-app/**` (managed package 흔적) |
-| 같은 npm 패키지 이미 의존성 | `Read package.json` → dependencies/devDependencies |
-| 같은 staticresource 이름 | `Glob force-app/**/staticresources/{name}/` 또는 `{name}.resource-meta.xml` |
+| Same class name exists | `Glob force-app/**/{LibClassName}.cls` |
+| Same namespace prefix in use | `Grep "<ns>__" force-app/**` (managed package traces) |
+| Same npm package already a dependency | `Read package.json` → dependencies/devDependencies |
+| Same staticresource name | `Glob force-app/**/staticresources/{name}/` or `{name}.resource-meta.xml` |
 | sfdx-project.json packageDirectories dependencies | `Read sfdx-project.json` |
 
-**충돌 시**:
-- 정확히 같은 라이브러리·같은 위치 → abort, "이미 설치됨, reuse 권고" 출력
-- 다른 라이브러리지만 namespace 충돌 가능성 → abort, 사용자에게 어떻게 할지 질문 (다른 위치로 install / abort)
+**On conflict**:
+- Same library, same location → abort, output "already installed, reuse"
+- Different library but namespace conflict possible → abort, ask user how to proceed (install at a different location / abort)
 
-## Step 3: 설치 방식 결정
+## Step 3: Choose install method
 
-### 자동 추정 규칙
+### Auto-inference rules
 
-| 입력 단서 | 방식 |
+| Input cue | Method |
 |---|---|
-| 식별자가 `04t` 로 시작 (15 또는 18자) | **A. Managed/Unlocked Package** |
-| 식별자가 `https://github.com/...` 또는 `git@github.com:...` 형태 | **B. Source Vendoring** 또는 **C. Git Submodule** (사용자 선택) |
-| 식별자가 `npm:<name>` 또는 `@<scope>/<name>` 또는 명백한 npm 이름 | **D. npm devDependency** |
-| 식별자가 `http(s)://...js` 또는 CDN 도메인 (cdn.jsdelivr.net, unpkg.com 등) | **E. Static Resource** |
-| 식별자 없음 또는 모호 | AskUserQuestion 으로 5지선다 |
+| Identifier starts with `04t` (15 or 18 chars) | **A. Managed/Unlocked Package** |
+| Identifier matches `https://github.com/...` or `git@github.com:...` | **B. Source Vendoring** or **C. Git Submodule** (user picks) |
+| Identifier `npm:<name>` / `@<scope>/<name>` / clear npm name | **D. npm devDependency** |
+| Identifier `http(s)://...js` or CDN domain (cdn.jsdelivr.net, unpkg.com, etc.) | **E. Static Resource** |
+| No identifier or ambiguous | 5-way pick via AskUserQuestion |
 
-### 5지선다 (모호할 때만)
+### 5-way pick (when ambiguous)
 
 ```
-어떤 방식으로 설치하시겠습니까?
-A) Managed/Unlocked Package — sf package install (04t ID 필요)
-B) Source Vendoring — git clone 후 .cls/.cls-meta.xml 을 force-app 트리에 복사
-C) Git Submodule — git submodule add (소스 유지 + 업데이트 추적)
-D) npm devDependency — npm i -D (LWC 테스트 도구 등)
-E) Static Resource — JS/CSS 파일을 staticresource 로 등록
+Which method to install?
+A) Managed/Unlocked Package — sf package install (04t ID required)
+B) Source Vendoring — git clone, then copy .cls/.cls-meta.xml into the force-app tree
+C) Git Submodule — git submodule add (keep source + track updates)
+D) npm devDependency — npm i -D (LWC test tooling, etc.)
+E) Static Resource — register a JS/CSS file as a staticresource
 ```
 
-추정한 방식이라도 확인 한 줄 표시 후 진행.
+Even when inferred, show one-line confirmation and proceed.
 
-## Step 4: 방식별 Plan 생성
+## Step 4: Per-method plan generation
 
 ### 4A. Managed/Unlocked Package
 
-**필수 입력 확인**:
-- 04t ID (사용자 명시) — 없으면 abort + "release 페이지 등에서 확인 후 다시 호출" 안내
-- 대상 org alias — 없으면 `sf org list --json` 으로 default org 조회
+**Required input check**:
+- 04t ID (user-provided) — abort if missing + guide "check on the release page and re-invoke"
+- Target org alias — if missing, look up the default org via `sf org list --json`
 
 **Plan**:
 ```
-방식: A (Managed/Unlocked Package)
-명령: sf package install --package <04t...> -o <alias> -w 10 -r
-대상 org: <alias> (Production: yes/no)
-설치 키: <필요 시 사용자 입력>
-예상 시간: ~10분 (대형 패키지는 더 김)
-부수 효과: 패키지의 모든 메타데이터가 org 에 추가됨
+Method: A (Managed/Unlocked Package)
+Command: sf package install --package <04t...> -o <alias> -w 10 -r
+Target org: <alias> (Production: yes/no)
+Install key: <user input if needed>
+ETA: ~10 minutes (longer for large packages)
+Side effects: all package metadata is added to the org
 ```
 
-**Production 가드**: 대상 org 가 production 이면 strong confirm — "production install 정말 진행? [y/N]".
+**Production guard**: if target is production, strong confirm — "really run install on production? [y/N]".
 
 ### 4B. Source Vendoring
 
-**필수 입력 확인**:
-- git URL — 사용자 명시
-- (선택) commit SHA / tag — 미지정이면 default branch HEAD, plan 에 명시
-- 가져올 파일 패턴 — 라이브러리별로 다름 (사용자 확인). 예: `src/classes/*.cls`, `src/classes/*.cls-meta.xml`
-- 대상 디렉토리 — `force-app/main/default/classes/<framework_name>/` 가 기본값, 사용자 확인
+**Required input check**:
+- git URL — user-provided
+- (optional) commit SHA / tag — default branch HEAD if unspecified, stated in plan
+- File patterns to pull — varies per library (confirm with user). Example: `src/classes/*.cls`, `src/classes/*.cls-meta.xml`
+- Target directory — `force-app/main/default/classes/<framework_name>/` is the default, confirm with user
 
 **Plan**:
 ```
-방식: B (Source Vendoring)
+Method: B (Source Vendoring)
 1) git clone --depth=1 <repo> /tmp/<name>
-2) 가져올 파일: <pattern>
-3) 대상: <target_dir>
-4) apiVersion 정합: 원본 <X> → 프로젝트 sourceApiVersion <Y> 로 갱신
-5) 라이선스: <SPDX> — 헤더 보존 + LICENSES/<name>.txt 추가 (해당 시)
-6) 배포 + 테스트: sf project deploy start --source-dir <target_dir> -o <alias>
-                   sf apex run test --tests <TestClassName> -o <alias>
-7) /tmp/<name> 정리
+2) Files to pull: <pattern>
+3) Target: <target_dir>
+4) apiVersion alignment: original <X> → project sourceApiVersion <Y>
+5) License: <SPDX> — preserve headers + add LICENSES/<name>.txt (if applicable)
+6) Deploy + test: sf project deploy start --source-dir <target_dir> -o <alias>
+                  sf apex run test --tests <TestClassName> -o <alias>
+7) Clean up /tmp/<name>
 ```
 
 ### 4C. Git Submodule
 
 **Plan**:
 ```
-방식: C (Git Submodule)
+Method: C (Git Submodule)
 1) git submodule add <repo> <path>
 2) git submodule update --init
-3) sfdx-project.json packageDirectories 에 path 추가 (필요 시)
-4) 배포 + 테스트
+3) Add path to sfdx-project.json packageDirectories (if needed)
+4) Deploy + test
 ```
 
-**주의**: submodule 은 SFDX 빌드/CI 와 호환성 확인 필요 — plan 에 "팀 git workflow 영향 있음" 경고 포함.
+**Note**: submodules require compatibility checks with SFDX build/CI — include a "team git workflow impact" warning in the plan.
 
 ### 4D. npm devDependency
 
 **Plan**:
 ```
-방식: D (npm devDependency)
-명령: npm i -D <pkg>[@<version>]
-변경 파일: package.json, package-lock.json
-부수 효과: node_modules/ 갱신
-검증: npm ls <pkg>
+Method: D (npm devDependency)
+Command: npm i -D <pkg>[@<version>]
+Files changed: package.json, package-lock.json
+Side effects: node_modules/ updated
+Verification: npm ls <pkg>
 ```
 
 ### 4E. Static Resource
 
 **Plan**:
 ```
-방식: E (Static Resource)
+Method: E (Static Resource)
 1) curl -L -o /tmp/<name>.<ext> <url>
-2) 파일 검증: 크기 / SHA256 (사용자가 제공한 경우)
-3) 대상: force-app/main/default/staticresources/<ResourceName>/
-       또는 단일 파일 force-app/main/default/staticresources/<ResourceName>.<ext>
-4) <ResourceName>.resource-meta.xml 생성:
+2) File verification: size / SHA256 (when user-supplied)
+3) Target: force-app/main/default/staticresources/<ResourceName>/
+       or single file force-app/main/default/staticresources/<ResourceName>.<ext>
+4) Generate <ResourceName>.resource-meta.xml:
      contentType: application/javascript|text/css|...
      cacheControl: Public
-5) 배포: sf project deploy start --source-dir force-app/main/default/staticresources/<ResourceName>* -o <alias>
-6) /tmp 정리
+5) Deploy: sf project deploy start --source-dir force-app/main/default/staticresources/<ResourceName>* -o <alias>
+6) Clean up /tmp
 ```
 
-## Step 5: Plan Dump + 승인 게이트 (공통)
+## Step 5: Plan dump + approval gate (common)
 
-위 plan 을 사용자에게 표시, 다음 항목을 명시:
-- 외부 네트워크 호출 도메인 (github.com, registry.npmjs.org, login.salesforce.com 등)
-- 파일 시스템 변경 경로
-- org deploy 영향 (대상 org alias, production 여부)
-- 예상 시간
+Show the plan to the user and explicitly state:
+- External network call domains (github.com, registry.npmjs.org, login.salesforce.com, etc.)
+- Filesystem change paths
+- Org deploy impact (target org alias, production?)
+- ETA
 
 ```
 [P]roceed  [E]dit plan  [A]bort
 ```
 
-Edit 선택 시: 어떤 항목을 수정할지 추가 질문 → plan 갱신 → 다시 Step 5.
+On Edit: ask which item to change → update plan → return to Step 5.
 
-### Step 5.5: 승인 sentinel 발급 (필수)
+### Step 5.5: Issue approval sentinel (required)
 
-사용자가 [P]roceed 응답한 직후, Step 6 의 install 명령을 실행하기 **전에** 발급:
+Immediately after the user's [P]roceed and **before** running the install commands of Step 6:
 
 ```bash
 node .claude/hooks/_lib/issue-library-approval.js <method> <identifier>
@@ -183,98 +183,98 @@ node .claude/hooks/_lib/issue-library-approval.js <method> <identifier>
 
 `method` ∈ `package` | `git-clone` | `git-submodule` | `npm` | `staticresource`
 
-`identifier` 는 plan 의 식별자 그대로 (04t ID, github URL, npm 패키지명, CDN URL).
+`identifier` is the plan's identifier verbatim (04t ID, github URL, npm package name, CDN URL).
 
-`pre-library-install-gate.js` hook 이 sentinel 없으면 `sf package install` / `git clone .. force-app/` / `npm install` / `curl ..staticresources..` 를 차단함 (TTL 30분 + git HEAD 매칭). 사용자 승인 없이 sentinel만 발급하는 것은 정책 위반.
+The `pre-library-install-gate.js` hook blocks `sf package install` / `git clone .. force-app/` / `npm install` / `curl ..staticresources..` without a sentinel (TTL 30 min + git HEAD match). Issuing a sentinel without user approval is a policy violation.
 
-**Iron Law 강제**: `issue-library-approval.js` 는 식별자 형식을 정규식으로 검증한다 — 04t prefix / github.com 호스트 / 유효 npm name / http(s) URL. hallucinated 식별자는 발급 단계에서 즉시 실패.
+**Iron Law enforcement**: `issue-library-approval.js` validates identifier format with regex — 04t prefix / github.com host / valid npm name / http(s) URL. Hallucinated identifiers fail at issuance immediately.
 
-## Step 6: 실행 (방식별 Bash)
+## Step 6: Execute (per-method Bash)
 
-각 방식의 plan 명령을 순서대로 실행. **에러 발생 시 즉시 중단**, 다음 정보 출력:
-- 실패한 단계
-- 이미 변경된 파일/상태 (rollback 안 함, 사용자 판단)
-- 다음 권장 액션 (예: `git checkout -- force-app/...` 으로 vendoring 되돌리기)
+Run each plan command in sequence. **Stop immediately on error**, output:
+- Failed step
+- Files/state already changed (no rollback, user judgment)
+- Recommended next action (e.g. `git checkout -- force-app/...` to undo vendoring)
 
-각 단계마다 결과 요약 한 줄 출력 (사용자가 진행 상황 가시).
+Print a one-line result summary per step (so the user sees progress).
 
-## Step 7: 검증 (방식별)
+## Step 7: Verify (per method)
 
-| 방식 | 검증 |
+| Method | Verification |
 |---|---|
-| A | `sf data query --query "SELECT NamespacePrefix, SubscriberPackageId FROM InstalledSubscriberPackage WHERE SubscriberPackageId LIKE '<04t의 첫 13자>%'" -o <alias>` |
-| B | 대상 디렉토리 파일 존재 (Glob) + 테스트 클래스 통과 |
-| C | `git submodule status` 출력 + 대상 디렉토리 파일 존재 |
-| D | `npm ls <pkg>` 또는 `package.json` diff |
-| E | staticresource meta-xml 존재 + org 에 배포됨 (`sf data query --query "SELECT Name FROM StaticResource WHERE Name='<ResourceName>'" -o <alias>`) |
+| A | `sf data query --query "SELECT NamespacePrefix, SubscriberPackageId FROM InstalledSubscriberPackage WHERE SubscriberPackageId LIKE '<first 13 chars of 04t>%'" -o <alias>` |
+| B | Files exist in target dir (Glob) + test class passes |
+| C | `git submodule status` output + files exist in target dir |
+| D | `npm ls <pkg>` or `package.json` diff |
+| E | staticresource meta-xml exists + deployed in org (`sf data query --query "SELECT Name FROM StaticResource WHERE Name='<ResourceName>'" -o <alias>`) |
 
-검증 실패 시: install 실패로 간주, 사용자에게 보고 + decisions.md 기록 안 함.
+If verification fails: treat as install failure, report to user, do not record in decisions.md.
 
-## Step 8: 인벤토리 재검증
+## Step 8: Inventory re-verification
 
-`Agent` 툴로 `sf-design-library-reviewer` 1회 재호출 (대상 design.md 또는 dummy design.md 경로 전달). 출력의 `## Project Inventory (실측)` 섹션이 갱신되었는지 확인:
-- 갱신됨 → 정상, Step 9 진행
-- 갱신되지 않음 → 사용자에게 경고. install 명령은 성공했지만 reviewer 가 인지 못 함 → 인벤토리 패턴 불일치 가능성 (예: vendoring 위치가 reviewer 가 안 보는 경로). 사용자가 다음 design 에서 라이브러리를 활용할 때 reviewer 가 다시 권고할 수 있음을 안내.
+Re-invoke `sf-design-library-reviewer` once via the `Agent` tool (pass the target design.md or a dummy design.md path). Confirm the `## Project Inventory (measured)` section in the output is updated:
+- Updated → fine, proceed to Step 9
+- Not updated → warn the user. Install command succeeded but reviewer did not pick it up → potential inventory pattern mismatch (e.g. vendoring location not visible to reviewer). Inform the user that the reviewer may recommend it again on the next design.
 
-## Step 9: `.harness-sf/decisions.md` 기록
+## Step 9: Record in `.harness-sf/decisions.md`
 
-파일 없으면 생성, 있으면 append. 형식:
+Create if missing, append if present. Format:
 
 ```markdown
-## {YYYY-MM-DD} — {라이브러리명} 도입
+## {YYYY-MM-DD} — {Library name} adoption
 
-- **라이브러리**: {이름}
-- **버전/SHA**: {tag, commit, 04t 마지막 자리, npm 버전 등 식별 가능한 값}
-- **방식**: {A|B|C|D|E}
-- **위치**: {경로 또는 "org 전역 namespace <ns>"}
-- **사유**: {design.md 경로 + 한 줄 요약 또는 standalone 시 사용자 입력}
-- **규약**: {사용 컨벤션 1~3줄 — 라이브러리별 핵심 패턴}
-- **라이선스**: {SPDX or "managed package"}
-- **install 시각**: {timestamp}
+- **Library**: {name}
+- **Version/SHA**: {tag, commit, last digits of 04t, npm version, etc. — any identifier}
+- **Method**: {A|B|C|D|E}
+- **Location**: {path or "org-wide namespace <ns>"}
+- **Reason**: {design.md path + one-line summary, or user input in standalone}
+- **Convention**: {1–3 lines of usage convention — key patterns per library}
+- **License**: {SPDX or "managed package"}
+- **Install timestamp**: {timestamp}
 ```
 
-이 파일은 향후 `sf-design-library-reviewer` 가 새로운 design 검토 시 **반드시 읽어야 함** — 이미 도입된 것을 또 권고하지 않도록.
+This file **must be read** by `sf-design-library-reviewer` for future design reviews — to avoid recommending what is already adopted.
 
-## Step 10: 사용 컨벤션 안내 + 마이그레이션 체크리스트
+## Step 10: Usage convention notes + migration checklist
 
-### 사용 컨벤션 안내
-라이브러리별로 핵심 사용 패턴 1~3줄 출력. 예 (TriggerHandler):
+### Usage convention notes
+Output 1–3 lines of key usage patterns per library. Example (TriggerHandler):
 ```
-TriggerHandler 설치 완료.
-사용 패턴:
-1) 객체별 핸들러 클래스: AccountTriggerHandler extends TriggerHandler
-2) 트리거 본체 한 줄: trigger AccountTrigger on Account (...) { new AccountTriggerHandler().run(); }
-3) 핸들러에서 beforeInsert / afterUpdate 등 가상 메서드 override
-다음 단계: /sf-apex 호출 — design 단계에서 reviewer 가 자동으로 TriggerHandler 활용 권고를 생성합니다.
-```
-
-### 마이그레이션 체크리스트 (해당 시)
-
-기존 패턴이 새 라이브러리와 다르면 **자동 마이그레이션 금지** — 체크리스트만 출력:
-
-```
-기존 트리거 N개 발견 (Glob force-app/**/*.trigger):
- - AccountTrigger.trigger    (15줄, 로직 포함 — 마이그레이션 권고)
- - ContactTrigger.trigger    (8줄, 핸들러 호출만 — 패턴 다름, 검토 필요)
-마이그레이션은 객체별로 /sf-apex 의 MODIFY 모드로 진행 권장.
-사용자가 명시 요청하지 않으면 자동 변환 안 함 (regression risk).
+TriggerHandler installed.
+Usage pattern:
+1) Per-object handler class: AccountTriggerHandler extends TriggerHandler
+2) Trigger one-liner: trigger AccountTrigger on Account (...) { new AccountTriggerHandler().run(); }
+3) Override virtual methods like beforeInsert / afterUpdate in handler
+Next: invoke /sf-apex — at the design step the reviewer will auto-recommend TriggerHandler usage.
 ```
 
-## Step 11: 메인 skill 로 복귀 (delegated 모드만)
+### Migration checklist (where applicable)
 
-호출자(design-first skill)에게 install 결과 요약 반환:
-- 성공한 라이브러리 + 위치
-- 실패한 라이브러리 + 사유
-- decisions.md 갱신 여부
-- 인벤토리 재검증 결과
+When existing patterns differ from the new library, **no auto-migration** — output a checklist only:
 
-호출자는 결과를 받아 Step 2 (sf-context-explorer) 진행.
+```
+N existing triggers found (Glob force-app/**/*.trigger):
+ - AccountTrigger.trigger    (15 lines, contains logic — migration recommended)
+ - ContactTrigger.trigger    (8 lines, handler call only — pattern differs, review needed)
+Migrate per object via /sf-apex MODIFY mode.
+No auto-conversion unless user explicitly requests (regression risk).
+```
 
-## 절대 금지
+## Step 11: Return to main skill (delegated mode only)
 
-- **존재하지 않는 04t ID 추측해서 사용** — 가장 위험한 실패 모드. 사용자가 입력한 것만.
-- **production org 에 무경고 install**.
-- **기존 코드 자동 마이그레이션** — 체크리스트로만.
-- **rollback 시도** — 부분 실패 시 사용자가 정리.
-- **license 헤더 / copyright 제거** — vendoring 시 보존 필수.
-- **검증 단계 건너뛰기** — install 명령 exit 0 = 검증 통과 아님.
+Return install summary to the caller (the design-first skill):
+- Successful libraries + locations
+- Failed libraries + reasons
+- Whether decisions.md was updated
+- Inventory re-verification result
+
+The caller takes the result and proceeds to Step 2 (sf-context-explorer).
+
+## Strictly forbidden
+
+- **Guessing a non-existent 04t ID** — most dangerous failure mode. User input only.
+- **Installing on production with no warning**.
+- **Auto-migrating existing code** — checklist only.
+- **Rollback attempts** — user cleans up on partial failure.
+- **Removing license headers / copyright** — must preserve when vendoring.
+- **Skipping verification** — install command exit 0 ≠ verification pass.
