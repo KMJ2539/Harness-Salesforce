@@ -12,7 +12,6 @@
 //   {
 //     feature: string,                       // slug
 //     design_path: string,                   // relative path to feature design.md
-//     head_sha: string|null,                 // git HEAD at dispatch start
 //     started_at: ISO8601,
 //     current_index: number,                 // index into artifacts[], -1 if done
 //     artifacts: [
@@ -69,7 +68,6 @@ function initState(slug, designPath, artifacts) {
   const data = {
     feature: slug,
     design_path: designPath,
-    head_sha: sentinelLib.gitHeadSha(),
     started_at: new Date().toISOString(),
     current_index: 0,
     artifacts: artifacts.map(a => ({

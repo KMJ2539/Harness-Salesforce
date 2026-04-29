@@ -98,7 +98,6 @@ if (slug) extras.slug = slug;
 if (designRevision) extras.design_revision = designRevision;
 const data = sentinel.writeSentinel('delegated-mode', key, extras);
 
-const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…`
-                                : `head=${(data.head_sha || 'no-git').slice(0, 7)}`;
+const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…` : 'no-fingerprint';
 process.stdout.write(`delegated-token: ${rel}#${artifactId} → ${subSkill} (key=${key}, ${fpDesc})\n`);
 process.exit(0);

@@ -47,8 +47,7 @@ for (const arg of args) {
   // PR C2 — modify-approval has no slug context (per-file). fingerprint still
   // captured automatically by writeSentinel; state_version omitted.
   const data = sentinel.writeSentinel('modify-approvals', key, { path: rel });
-  const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…`
-                                  : `head=${(data.head_sha || 'no-git').slice(0, 7)}`;
+  const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…` : 'no-fingerprint';
   process.stdout.write(`approved MODIFY: ${rel} (${fpDesc}, expires in 30m)\n`);
   issued++;
 }

@@ -77,7 +77,9 @@ function isDeployStart(cmd) {
 
   if (process.env.HARNESS_SF_SKIP_DEPLOY_GATE === '1') process.exit(0);
 
-  // PR C2 — prefer canonical state.deploy.last_validation when present.
+  // PR C2/C3 — prefer canonical state.deploy.last_validation (fingerprint).
+  // Fall back to legacy .harness-sf/last-validation.json (head_sha) until
+  // sf-deploy-validator agent ships fingerprint output.
   let val = null;
   let valSource = null;
   const newest = newestStateWithDeployValidation();
@@ -87,7 +89,6 @@ function isDeployStart(cmd) {
       validation_result: lv.result === 'pass' ? 'Succeeded' : (lv.result || 'unknown'),
       validated_at: lv.at,
       coverage_overall: lv.coverage_overall,
-      // synthesize a sentinel-compatible shape with fingerprint instead of head_sha.
       fingerprint: lv.fingerprint,
     };
     valSource = `state:${newest.file}`;
@@ -105,13 +106,31 @@ function isDeployStart(cmd) {
     deny(`deploy gate: last validation_result='${val.validation_result || 'unknown'}' (${valSource}). Fix issues and re-run /sf-deploy-validator.`);
   }
 
-  // Build sentinel-compatible shape. New shape uses fingerprint; legacy uses head_sha.
-  const shaped = { issued_at: val.validated_at };
-  if (val.fingerprint) shaped.fingerprint = val.fingerprint;
-  else shaped.head_sha = val.head_sha;
-  const v = sentinel.validate(shaped, TTL_MS);
-  if (!v.ok) {
-    deny(`deploy gate: ${v.reason} (${valSource}). Re-run /sf-deploy-validator.`);
+  // TTL freshness — common to both paths.
+  const issuedAt = val.validated_at ? new Date(val.validated_at).getTime() : NaN;
+  if (!Number.isFinite(issuedAt)) deny(`deploy gate: malformed validated_at (${valSource}).`);
+  const ageMs = Date.now() - issuedAt;
+  if (ageMs > TTL_MS) {
+    const min = Math.floor(ageMs / 60000);
+    const ttlMin = Math.floor(TTL_MS / 60000);
+    deny(`deploy gate: validation is ${min}m old (>${ttlMin}m TTL) (${valSource}). Re-run /sf-deploy-validator.`);
+  }
+
+  // Integrity check — fingerprint (new) or head_sha (legacy).
+  if (val.fingerprint) {
+    if (!fingerprintLib) deny(`deploy gate: fingerprint module unavailable.`);
+    let cur = null;
+    try { cur = fingerprintLib.fingerprint(); } catch { cur = null; }
+    if (!cur) deny(`deploy gate: cannot compute current fingerprint.`);
+    if (!fingerprintLib.compare(cur, val.fingerprint)) {
+      deny(`deploy gate: fingerprint mismatch (approved mode=${val.fingerprint.mode} value=${String(val.fingerprint.value).slice(0, 12)}…, now mode=${cur.mode} value=${String(cur.value).slice(0, 12)}…) (${valSource}). Re-run /sf-deploy-validator.`);
+    }
+  } else if (val.head_sha) {
+    // Legacy path. Inline head_sha check (sentinel.validate now requires fingerprint).
+    const head = sentinel.gitHeadSha();
+    if (head && val.head_sha !== head) {
+      deny(`deploy gate: HEAD moved since validation (approved ${String(val.head_sha).slice(0, 7)}, now ${head.slice(0, 7)}) (${valSource}). Re-run /sf-deploy-validator.`);
+    }
   }
 
   const target = resolveCoverageTarget();

@@ -105,8 +105,7 @@ if (slug) extras.slug = slug;
 if (designRevision) extras.design_revision = designRevision;
 if (bodyHashStr) extras.design_body_hash = bodyHashStr;
 const data = sentinel.writeSentinel('design-approvals', key, extras);
-const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…`
-                                : `head=${(data.head_sha || 'no-git').slice(0, 7)}`;
+const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…` : 'no-fingerprint';
 const sv = data.state_version != null ? ` state_v=${data.state_version}` : '';
 process.stdout.write(`approved DESIGN: ${rel} (type=${type}, name=${name}, ${fpDesc}${sv}, expires in 2h)\n`);
 process.exit(0);

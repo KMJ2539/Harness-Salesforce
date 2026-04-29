@@ -54,6 +54,5 @@ const key = crypto.createHash('sha1').update(`${method}|${identifier}`).digest('
 // PR C2 — library approval is global (cross-feature) so no slug context.
 // fingerprint captured automatically; state_version omitted.
 const data = sentinel.writeSentinel('library-approvals', key, { method, identifier });
-const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…`
-                                : `head=${(data.head_sha || 'no-git').slice(0, 7)}`;
+const fpDesc = data.fingerprint ? `${data.fingerprint.mode}=${String(data.fingerprint.value).slice(0, 12)}…` : 'no-fingerprint';
 process.stdout.write(`approved LIBRARY: ${method}=${identifier} (${fpDesc}, expires in 30m)\n`);

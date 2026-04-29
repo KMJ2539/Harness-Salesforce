@@ -3,20 +3,18 @@
 // Sentinel = JSON file under .harness-sf/.cache/<kind>/<key>.json that proves
 // "this action was approved at this point in time, against this code state".
 //
-// Invariants enforced by validate():
+// Invariants enforced by validate() (PR C3 — fingerprint required):
 //   1) TTL freshness — approval not older than ttlMs
-//   2) head_sha match (legacy) — current git HEAD == sha at approval time
-//      (skipped if not a git repo). Will be removed in PR C3.
-//   3) fingerprint match (PR C1+) — when sentinel includes a fingerprint
-//      object, the current repo fingerprint must match by both mode AND value.
-//   4) state_version freshness (PR C1+, optional) — when sentinel binds a
-//      slug+revision, the current state.json's version must NOT have advanced
-//      past sentinel.state_version (sentinel was issued against a snapshot).
+//   2) fingerprint match — sentinel.fingerprint must equal current repo
+//      fingerprint by both mode AND value. Sentinels without fingerprint
+//      (pre-C1 shape) are rejected as "legacy shape — re-issue".
+//   3) state_version freshness (optional) — when sentinel binds a slug+
+//      revision, the current state.json's version must NOT have advanced
+//      past sentinel.state_version.
 //
-// PR C1 ships dual-shape: writers populate BOTH head_sha (legacy) and the new
-// fingerprint/state_version/design_body_hash fields when context permits.
-// validate() prefers the new fields when present and falls back to head_sha
-// otherwise. PR C2 will move gates to the new fields. PR C3 drops head_sha.
+// gitHeadSha() is still exported for callers (e.g. pre-deploy-gate's legacy
+// .harness-sf/last-validation.json path) that have not yet migrated to the
+// fingerprint API. New sentinel writes do not include head_sha.
 //
 // Public API:
 //   - sentinelDir(kind)               → absolute dir for a sentinel kind
@@ -79,7 +77,7 @@ function writeSentinel(kind, key, extra = {}) {
   const dir = sentinelDir(kind);
   fs.mkdirSync(dir, { recursive: true });
 
-  // PR C1 — populate new shape alongside legacy head_sha when context permits.
+  // PR C3 — fingerprint-only. head_sha removed from new sentinels.
   let fp = null;
   if (fingerprintLib) {
     try { fp = fingerprintLib.fingerprint(); } catch { fp = null; }
@@ -95,7 +93,6 @@ function writeSentinel(kind, key, extra = {}) {
 
   const data = {
     issued_at: new Date().toISOString(),
-    head_sha: gitHeadSha(), // legacy — drops in PR C3
     ...(fp ? { fingerprint: fp } : {}),
     ...(stateVersion !== null ? { state_version: stateVersion } : {}),
     ...extra,
@@ -124,24 +121,25 @@ function validate(sentinel, ttlMs) {
     return { ok: false, reason: `sentinel is ${min}m old (>${ttlMin}m TTL)` };
   }
 
-  if (sentinel.fingerprint && fingerprintLib) {
-    let cur = null;
-    try { cur = fingerprintLib.fingerprint(); } catch { cur = null; }
-    if (cur && !fingerprintLib.compare(cur, sentinel.fingerprint)) {
-      return {
-        ok: false,
-        reason: `fingerprint mismatch (approved mode=${sentinel.fingerprint.mode} value=${String(sentinel.fingerprint.value).slice(0, 12)}…, now mode=${cur.mode} value=${String(cur.value).slice(0, 12)}…)`,
-      };
-    }
-  } else {
-    // Legacy fallback — head_sha check only when no fingerprint shape present.
-    const head = gitHeadSha();
-    if (head && sentinel.head_sha && sentinel.head_sha !== head) {
-      return {
-        ok: false,
-        reason: `HEAD moved since approval (approved ${String(sentinel.head_sha).slice(0,7)}, now ${head.slice(0,7)})`,
-      };
-    }
+  // PR C3 — fingerprint required. Sentinels without it are stale (pre-C1
+  // shape) and must be re-issued.
+  if (!sentinel.fingerprint) {
+    return {
+      ok: false,
+      reason: 'sentinel missing fingerprint (legacy shape) — re-issue approval',
+    };
+  }
+  if (!fingerprintLib) {
+    return { ok: false, reason: 'fingerprint module unavailable' };
+  }
+  let cur = null;
+  try { cur = fingerprintLib.fingerprint(); } catch { cur = null; }
+  if (!cur) return { ok: false, reason: 'cannot compute current fingerprint' };
+  if (!fingerprintLib.compare(cur, sentinel.fingerprint)) {
+    return {
+      ok: false,
+      reason: `fingerprint mismatch (approved mode=${sentinel.fingerprint.mode} value=${String(sentinel.fingerprint.value).slice(0, 12)}…, now mode=${cur.mode} value=${String(cur.value).slice(0, 12)}…)`,
+    };
   }
 
   if (

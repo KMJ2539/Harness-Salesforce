@@ -72,7 +72,7 @@ try {
       try { artifacts = JSON.parse(artifactsJson); }
       catch (e) { fail(`artifacts-json parse error: ${e.message}`); }
       const state = ds.initState(slug, designPath, artifacts);
-      process.stdout.write(`init dispatch ${slug}: ${state.artifacts.length} artifacts (head=${(state.head_sha || 'no-git').slice(0, 7)})\n`);
+      process.stdout.write(`init dispatch ${slug}: ${state.artifacts.length} artifacts\n`);
       break;
     }
     case 'start': {
