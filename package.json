@@ -12,10 +12,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node bin/install.js --help",
+    "test": "node --test templates/hooks/_lib/__tests__/*.test.js",
+    "test:smoke": "node bin/install.js --help && node bin/install.js list",
     "test:harness": "npm --workspace harness test",
     "typecheck:harness": "npm --workspace harness run typecheck",
-    "prepublishOnly": "node bin/install.js --help && node bin/install.js list"
+    "prepublishOnly": "node --test templates/hooks/_lib/__tests__/ && node bin/install.js --help && node bin/install.js list"
   },
   "workspaces": [
     "harness"
