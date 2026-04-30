@@ -1,6 +1,6 @@
 {
   "name": "harness-sf",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "Salesforce engineering harness for Claude Code — production-grade subagents and skills for Apex, Flow, LWC, Aura, and metadata workflows.",
   "bin": {
     "harness-sf": "bin/install.js"
@@ -16,7 +16,7 @@
     "test:smoke": "node bin/install.js --help && node bin/install.js list",
     "test:harness": "npm --workspace harness test",
     "typecheck:harness": "npm --workspace harness run typecheck",
-    "prepublishOnly": "node --test templates/hooks/_lib/__tests__/ && node bin/install.js --help && node bin/install.js list"
+    "prepublishOnly": "node --test templates/hooks/_lib/__tests__/*.test.js && node bin/install.js --help && node bin/install.js list"
   },
   "workspaces": [
     "harness"

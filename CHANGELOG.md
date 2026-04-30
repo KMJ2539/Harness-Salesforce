@@ -2,6 +2,27 @@
 
 All notable changes to `harness-sf` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-04-30
+
+### Changed
+
+- **`/sf-feature` token cost cut** — typical run drops from ~100k to ~15–30k for small revisions. Four multipliers addressed:
+  - **Step 3.95 review tier gate** (default = `none`). Single-pass plan unless the user opts into `light` (1 reviewer) / `standard` (3 parallel) / `full` (4+library). `validate-design.js --check-library-verdict` skips when `review_tier ∈ {none, light, standard}`; legacy designs keep strict default.
+  - **`SKILL.md` split to `references/`** — 715 → 482 lines. `confirmation-catalog.md` (Step 3.5), `approval-gates.md` (Step 5), `auto-fix-loop.md` (Step 7.5).
+  - **`archive-design-revision.js`** — superseded review/resolution blocks fenced via `<!-- archive-revision: N -->` move to sibling `{slug}.archive.md` on revision bump (Step 5.1.5 / 7.5.5). Active design.md stays small for sub-agents; audit trace preserved in archive.
+  - **SessionStart context compression** — `compressMd()` collapses bulky PROJECT.md / local.md sections (≥15 non-blank lines OR contains a code fence) to a 1-line pointer. Files unchanged on disk; `check-logging.js` and other direct readers keep working as-is.
+
+### Notes
+
+- Breaking changes: none. Existing designs without `review_tier` frontmatter run the legacy strict library-verdict gate.
+- Tests: 91/91 (5 archive + 4 compress + existing 82).
+
+## [0.1.2] — 2026-04-29
+
+### Fixed
+
+- `prepublishOnly` test glob now uses `*.test.js` to match the `npm test` script behavior.
+
 ## [0.1.1] — 2026-04-29
 
 ### Added
