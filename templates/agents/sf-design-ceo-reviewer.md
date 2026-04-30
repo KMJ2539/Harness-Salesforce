@@ -43,15 +43,15 @@ approve  |  approve-with-tradeoffs
 (Never use "block".)
 
 ## Tradeoffs
-1. [H1] <one-sentence summary>  — [H#] when user decision is required, [M#]/[L#] for review-only suggestions.
+1. [H1|design] <one-sentence summary>  — [H#|design] when user decision is required, [M#|design]/[L#|design] for review-only suggestions.
    - Current design choice: ...
    - Alternative A: ... (pros: ..., cons: ...)
    - Alternative B: ... (pros: ..., cons: ...)
    - Our take: <one-line suggestion — final call is the user's>
 
-2. [M1] ...
+2. [M1|design] ...
 
-(Every tradeoff must carry a `[H#]/[M#]/[L#]` ID — design.md `## Review Resolution` records decisions by ID.)
+(Every tradeoff must carry a `[H#|design]/[M#|design]/[L#|design]` ID with category — design.md `## Review Resolution` records decisions by ID. CEO reviewer's category is always `design` — strategic/scope tradeoffs are eligible for bundled approval at MEDIUM level.)
 
 ## Questions to Builder
 - (3–5 questions the user should answer clearly)

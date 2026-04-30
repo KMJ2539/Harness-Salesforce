@@ -52,7 +52,9 @@ A single `.harness-sf/designs/{name}.md` path.
 - No Write permission — never attempt to create files.
 
 ## Risk ID convention (required)
-Every risk must have a `[H1]/[M1]/[L1]` ID — numbered from 1 within the review. design.md `## Review Resolution` references these IDs. Risks without IDs are blocked by the sentinel.
+Every risk must have a `[H1|security]/[M1|security]/[L1|security]` ID with category — numbered from 1 within the review. design.md `## Review Resolution` references these IDs. Risks without IDs/category are blocked by the sentinel.
+
+**Category for Security reviewer**: always `security` (single fixed value). All security risks are subject to per-item approval — no bundling.
 
 ## Output format
 
@@ -63,9 +65,9 @@ Every risk must have a `[H1]/[M1]/[L1]` ID — numbered from 1 within the review
 approve  |  approve-with-risks
 
 ## Risks
-- [H1] <item>: <threat scenario> → <mitigation>
-- [M1] ...
-- [L1] ...
+- [H1|security] <item>: <threat scenario> → <mitigation>
+- [M1|security] ...
+- [L1|security] ...
 
 ## OWASP / SF-Specific Mapping
 - (only when applicable — Injection / BAC / Data Exposure, etc.)

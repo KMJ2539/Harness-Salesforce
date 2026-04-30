@@ -62,7 +62,9 @@ A single `.harness-sf/designs/{name}.md` path.
 - No Write permission — never attempt to create files.
 
 ## Risk ID convention (required)
-[Required] missing cases use `[H1]/[H2]` IDs; [Recommended] use `[M1]/[L1]`. design.md `## Review Resolution` references these. Missing cases without IDs are blocked by the sentinel.
+[Required] missing cases use `[H1|test]/[H2|test]` IDs; [Recommended] use `[M1|test]/[L1|test]`. design.md `## Review Resolution` references these. Missing cases without IDs/category are blocked by the sentinel.
+
+**Category for QA reviewer**: always `test` (single fixed value). MEDIUM-test items are eligible for bundled approval at the skill level.
 
 ## Output format
 
@@ -73,8 +75,8 @@ A single `.harness-sf/designs/{name}.md` path.
 approve  |  approve-with-missing-cases
 
 ## Missing Cases
-- [H1] [Required] <category>: <which case is missing>
-- [M1] [Recommended] ...
+- [H1|test] [Required] <category>: <which case is missing>
+- [M1|test] [Recommended] ...
 
 ## Assertion Quality
 - (simple execution vs state verification — evaluate the design's intent)

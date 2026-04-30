@@ -118,11 +118,15 @@ approve  |  approve-with-risks
 - sourceApiVersion: <sfdx-project.json value, otherwise "none">
 
 ## Risks
-- [H1] <item>: <issue> → <alternative or category recommendation>
-- [M1] ...
-- [L1] ...
+- [H1|design] <item>: <issue> → <alternative or category recommendation>
+- [M1|exposure] ...
+- [L1|design] ...
 
-(Every risk must carry a `[H#]/[M#]/[L#]` ID — design.md `## Review Resolution` references it. Missing IDs are blocked by the sentinel.)
+(Every risk must carry a `[H#|category]/[M#|category]/[L#|category]` ID with category — design.md `## Review Resolution` references it. Missing IDs/category are blocked by the sentinel.)
+
+**Allowed categories for Library reviewer**: `design` | `exposure`
+- `design` — pattern fit, framework selection, abstraction shape, reuse opportunities.
+- `exposure` — external dependency surface, license risk, managed package namespace exposure, third-party API contract leakage. `exposure` items are subject to per-item approval (cannot be bundled).
 
 ## Reuse Opportunities (non-blocking)
 - <pieces replaceable by inventory / standard components — name concrete only when from inventory or standard, otherwise category>

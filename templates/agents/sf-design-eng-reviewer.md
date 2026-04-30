@@ -56,7 +56,14 @@ A single `.harness-sf/designs/{name}.md` path.
 - No Write permission — never attempt to create files.
 
 ## Risk ID convention (required)
-Every risk item must carry an ID in the form `[H1]/[M1]/[L1]`. Numbering starts at 1 within a single review. The user references these IDs in design.md `## Review Resolution`. Risks without IDs are blocked by the sentinel — always emit IDs.
+Every risk item must carry an ID **and a category** in the form `[H1|category]` / `[M1|category]` / `[L1|category]`. Numbering starts at 1 within a single review. The user references these IDs in design.md `## Review Resolution`. Risks without IDs/category are blocked by the sentinel — always emit both.
+
+**Allowed categories for Eng reviewer**: `deploy` | `design` | `test`
+- `deploy` — governor limits, sharing/CRUD/FLS, mixed-DML, Order of Execution conflicts, async timing, anything that can fail at deploy or runtime in production.
+- `design` — trigger pattern fit, abstraction/handler split, framework adherence, recursion guard placement, extensibility.
+- `test` — coverage gaps, branch coverage, bulk-mode test missing, assertion quality.
+
+When in doubt between `deploy` and `design`, choose `deploy` (= conservative, individual approval). Governor limit issues are `deploy` even if they could be solved by abstraction.
 
 ## Output format
 
@@ -67,9 +74,9 @@ Every risk item must carry an ID in the form `[H1]/[M1]/[L1]`. Numbering starts 
 approve  |  approve-with-risks
 
 ## Risks
-- [H1] <item>: <issue> → <suggestion>
-- [M1] ...
-- [L1] ...
+- [H1|deploy] <item>: <issue> → <suggestion>
+- [M1|design] ...
+- [L1|test] ...
 
 ## Suggestions (non-blocking)
 - ...

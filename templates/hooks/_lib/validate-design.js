@@ -177,17 +177,18 @@ function parseReviewRisks(reviewsSection) {
     const end = i + 1 < personaPositions.length ? personaPositions[i + 1].start : reviewsSection.length;
     const block = reviewsSection.slice(start, end);
     const persona = personaPositions[i].persona;
-    // Match [H1], [M2], [L3] — single-letter severity + number
-    const idRe = /\[([HMLhml])(\d+)\]/g;
+    // Match [H1] or [H1|category] — severity + number, optional category
+    const idRe = /\[([HMLhml])(\d+)(?:\|([a-z]+))?\]/g;
     const seen = new Set();
     let m;
     while ((m = idRe.exec(block)) !== null) {
       const sev = m[1].toUpperCase();
       const num = parseInt(m[2], 10);
+      const category = (m[3] || 'design').toLowerCase();
       const key = `${sev}${num}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      risks.push({ persona, severity: sev, id_num: num, full_id: key });
+      risks.push({ persona, severity: sev, id_num: num, full_id: key, category });
     }
     // Legacy unlabeled risks: lines starting with "[HIGH]" / "[MEDIUM]" without ID
     const legacyRe = /^\s*[-*]\s*\[(HIGH|MEDIUM)\](?!\s*\[)/gmi;
@@ -200,16 +201,49 @@ function parseReviewRisks(reviewsSection) {
 }
 
 // Parse resolution log: map full_id -> response text length
+// Accepts both "- H1: text" (legacy) and "- H1|category: text" (current).
+// Strips Bundled subsection before scanning to avoid double-counting bundled IDs.
 function parseResolution(resolutionSection) {
   if (!resolutionSection) return new Map();
   const out = new Map();
-  // Match lines like "- H1: response text" or "* M2: response text"
-  const lineRe = /^\s*[-*]\s*([HMLhml])(\d+)\s*[:\-]\s*(.+?)\s*$/gm;
+  // Strip the ### Bundled block — it's parsed separately by parseBundledResolutions.
+  const stripped = resolutionSection.replace(/^###\s+Bundled\s*$[\s\S]*?(?=^###\s+|$(?![\s\S]))/m, '');
+  const lineRe = /^\s*[-*]\s*([HMLhml])(\d+)(?:\|[a-z]+)?\s*[:\-]\s*(.+?)\s*$/gm;
   let m;
-  while ((m = lineRe.exec(resolutionSection)) !== null) {
+  while ((m = lineRe.exec(stripped)) !== null) {
     const id = `${m[1].toUpperCase()}${parseInt(m[2], 10)}`;
     const text = m[3].trim();
     out.set(id, text.length);
+  }
+  return out;
+}
+
+// Parse `### Bundled` subsection of `## Review Resolution`.
+// Returns Map<full_id, {bundle_category, reason_len}>.
+// Format expected:
+//   - category=test (2 items): bundle reason here. (apply_all)
+//     - M2|test, M5|test
+function parseBundledResolutions(resolutionSection) {
+  const out = new Map();
+  if (!resolutionSection) return out;
+  const m = resolutionSection.match(/^###\s+Bundled\s*$([\s\S]*?)(?=^###\s+|$(?![\s\S]))/m);
+  if (!m) return out;
+  const body = m[1];
+  // Each bundle entry: header line with category+reason, followed by ID list line.
+  const entryRe = /^\s*[-*]\s*category\s*=\s*([a-z]+)\s*\([^)]*\)\s*:\s*([^\n]+?)\s*\(([a-z_]+)\)\s*\n([\s\S]*?)(?=^\s*[-*]\s*category=|$(?![\s\S]))/gm;
+  let em;
+  while ((em = entryRe.exec(body)) !== null) {
+    const category = em[1].toLowerCase();
+    const reason = em[2].trim();
+    const action = em[3].toLowerCase();
+    const idsBlob = em[4];
+    if (!['apply_all', 'select', 'defer_all'].includes(action)) continue;
+    const idRe = /([HMLhml])(\d+)(?:\|[a-z]+)?/g;
+    let im;
+    while ((im = idRe.exec(idsBlob)) !== null) {
+      const id = `${im[1].toUpperCase()}${parseInt(im[2], 10)}`;
+      out.set(id, { bundle_category: category, reason_len: reason.length, action });
+    }
   }
   return out;
 }
@@ -223,7 +257,7 @@ function parseLibraryVerdict(text) {
   if (!section) {
     const reviews = extractSection(text, 'Reviews');
     if (reviews) {
-      const m = reviews.match(/^##\s+Library Verdict\s*$([\s\S]*?)(?=^##\s+|\Z)/m);
+      const m = reviews.match(/^##\s+Library Verdict\s*$([\s\S]*?)(?=^##\s+|$(?![\s\S]))/m);
       if (m) section = m[1];
     }
   }
@@ -301,14 +335,20 @@ if (type === 'feature') {
 if (errors.length) fail(errors);
 
 const MIN_RESOLUTION_CHARS = 8;
-const resolutionReport = { reviews_present: false, risks: [], unresolved_high: [], unresolved_medium: [], shallow: [], legacy_unlabeled: 0 };
+const MIN_BUNDLE_REASON_CHARS = 20;
+// Categories that may NOT be bundled at MEDIUM — must be individually resolved.
+const INDIVIDUAL_MEDIUM_CATEGORIES = new Set(['security', 'deploy', 'exposure']);
+const resolutionReport = {
+  reviews_present: false, risks: [], unresolved_high: [], unresolved_medium: [],
+  shallow: [], shallow_bundle: [], illegal_bundle: [], legacy_unlabeled: 0,
+};
 
 if (checkResolution) {
   const reviewsSection = extractSection(text, 'Reviews');
   if (reviewsSection && reviewsSection.replace(/\s/g, '').length > 0) {
     resolutionReport.reviews_present = true;
     const { risks, legacyCount } = parseReviewRisks(reviewsSection);
-    resolutionReport.risks = risks.map(r => `${r.persona}:${r.full_id}`);
+    resolutionReport.risks = risks.map(r => `${r.persona}:${r.full_id}|${r.category}`);
     resolutionReport.legacy_unlabeled = legacyCount;
 
     const resolutionSection = extractSection(text, 'Review Resolution');
@@ -316,24 +356,59 @@ if (checkResolution) {
       errors.push("'## Reviews' section exists but '## Review Resolution' is missing — every HIGH/MEDIUM risk needs a resolution line");
     } else {
       const resMap = parseResolution(resolutionSection);
+      const bundledMap = parseBundledResolutions(resolutionSection);
       for (const r of risks) {
-        const len = resMap.get(r.full_id);
+        const individualLen = resMap.get(r.full_id);
+        const bundled = bundledMap.get(r.full_id);
+        const tag = `${r.persona}:${r.full_id}|${r.category}`;
+
+        // HIGH never allows bundling — always individual.
         if (r.severity === 'H') {
-          if (len === undefined) resolutionReport.unresolved_high.push(`${r.persona}:${r.full_id}`);
-          else if (len < MIN_RESOLUTION_CHARS) resolutionReport.shallow.push(`${r.persona}:${r.full_id}`);
+          if (bundled && individualLen === undefined) {
+            resolutionReport.illegal_bundle.push(tag + ' (HIGH cannot be bundled)');
+            continue;
+          }
+          if (individualLen === undefined) resolutionReport.unresolved_high.push(tag);
+          else if (individualLen < MIN_RESOLUTION_CHARS) resolutionReport.shallow.push(tag);
         } else if (r.severity === 'M') {
-          if (len === undefined) resolutionReport.unresolved_medium.push(`${r.persona}:${r.full_id}`);
-          else if (len < MIN_RESOLUTION_CHARS) resolutionReport.shallow.push(`${r.persona}:${r.full_id}`);
+          // MEDIUM-{security,deploy,exposure} must be individual.
+          if (INDIVIDUAL_MEDIUM_CATEGORIES.has(r.category)) {
+            if (bundled && individualLen === undefined) {
+              resolutionReport.illegal_bundle.push(tag + ' (category ' + r.category + ' cannot be bundled)');
+              continue;
+            }
+            if (individualLen === undefined) resolutionReport.unresolved_medium.push(tag);
+            else if (individualLen < MIN_RESOLUTION_CHARS) resolutionReport.shallow.push(tag);
+          } else {
+            // MEDIUM-{test,design}: bundled OR individual both OK.
+            if (bundled) {
+              if (bundled.bundle_category !== r.category) {
+                resolutionReport.illegal_bundle.push(tag + ' (placed under category=' + bundled.bundle_category + ')');
+              } else if (bundled.reason_len < MIN_BUNDLE_REASON_CHARS) {
+                resolutionReport.shallow_bundle.push(tag);
+              }
+            } else if (individualLen !== undefined) {
+              if (individualLen < MIN_RESOLUTION_CHARS) resolutionReport.shallow.push(tag);
+            } else {
+              resolutionReport.unresolved_medium.push(tag);
+            }
+          }
         }
       }
       if (resolutionReport.unresolved_high.length) {
         errors.push(`unresolved HIGH risks: ${resolutionReport.unresolved_high.join(', ')} — add a resolution line under '## Review Resolution'`);
       }
       if (resolutionReport.unresolved_medium.length) {
-        errors.push(`unresolved MEDIUM risks: ${resolutionReport.unresolved_medium.join(', ')} — add at least a 1-line response`);
+        errors.push(`unresolved MEDIUM risks: ${resolutionReport.unresolved_medium.join(', ')} — add a resolution line or include in '### Bundled' (test/design only)`);
       }
       if (resolutionReport.shallow.length) {
         errors.push(`shallow resolutions (< ${MIN_RESOLUTION_CHARS} chars): ${resolutionReport.shallow.join(', ')} — write a real reason, not 1-word ack`);
+      }
+      if (resolutionReport.shallow_bundle.length) {
+        errors.push(`bundle reasons too short (< ${MIN_BUNDLE_REASON_CHARS} chars): ${resolutionReport.shallow_bundle.join(', ')} — bundle reason justifies N decisions, expand it`);
+      }
+      if (resolutionReport.illegal_bundle.length) {
+        errors.push(`illegal bundling: ${resolutionReport.illegal_bundle.join(', ')} — HIGH and MEDIUM-{security,deploy,exposure} require individual resolution`);
       }
     }
     if (legacyCount > 0) {
