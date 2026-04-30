@@ -23,12 +23,51 @@ function readIfExists(p, max = 8000) {
   } catch { return null; }
 }
 
-// 1. Project conventions (PROJECT.md and local override)
+// Compress bulky sections (≥15 non-blank lines OR contains a fenced codeblock)
+// into a 1-line pointer so SessionStart context stays lean. Skills/agents that
+// need the full content Read the file directly. Cuts ~50% on average PROJECT.md
+// and scales: a 200-line YAML schema doesn't bloat sub-agent inheritance cost.
+function compressMd(text, sourceRel) {
+  if (!text) return text;
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let i = 0;
+  // Pass header content (before first ##) through verbatim — it's usually a
+  // short preamble / file purpose blurb.
+  while (i < lines.length && !/^##\s+/.test(lines[i])) { out.push(lines[i]); i += 1; }
+  while (i < lines.length) {
+    const headerLine = lines[i];
+    const headerMatch = headerLine.match(/^##\s+(.+?)\s*$/);
+    if (!headerMatch) { out.push(headerLine); i += 1; continue; }
+    // Collect this section's body until the next ## or EOF.
+    const bodyStart = i + 1;
+    let j = bodyStart;
+    while (j < lines.length && !/^##\s+/.test(lines[j])) j += 1;
+    const body = lines.slice(bodyStart, j);
+    const nonBlank = body.filter(l => l.trim().length > 0).length;
+    const hasFence = body.some(l => /^```/.test(l));
+    if (nonBlank >= 15 || hasFence) {
+      out.push(headerLine);
+      out.push('');
+      out.push(`_(section bulky — see ${sourceRel} for full content; ${nonBlank} lines${hasFence ? ', includes config block' : ''})_`);
+      out.push('');
+    } else {
+      out.push(headerLine);
+      for (const l of body) out.push(l);
+    }
+    i = j;
+  }
+  return out.join('\n');
+}
+
+// 1. Project conventions (PROJECT.md and local override) — compressed for
+// session-start. Bulky sections collapse to 1-line pointers; the file itself
+// is unchanged and consumers (check-logging.js etc.) keep reading it raw.
 const projectMd = readIfExists(path.join(harnessDir, 'PROJECT.md'));
-if (projectMd) sections.push(`## Project Conventions (.harness-sf/PROJECT.md)\n\n${projectMd}`);
+if (projectMd) sections.push(`## Project Conventions (.harness-sf/PROJECT.md)\n\n${compressMd(projectMd, '.harness-sf/PROJECT.md')}`);
 
 const localMd = readIfExists(path.join(harnessDir, 'local.md'));
-if (localMd) sections.push(`## Project Conventions (local override — .harness-sf/local.md)\n\n${localMd}`);
+if (localMd) sections.push(`## Project Conventions (local override — .harness-sf/local.md)\n\n${compressMd(localMd, '.harness-sf/local.md')}`);
 
 // 2. sf org summary (target-org only, single line). Cap at 4 seconds.
 function runQuiet(cmd, args, timeoutMs) {

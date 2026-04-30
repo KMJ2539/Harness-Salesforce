@@ -24,7 +24,9 @@ Step 2: Decomposition → artifacts + dependency graph
    ↓
 Step 3: Write composite design.md
    ↓
-Step 4: 5-persona review (CEO/Eng/Security/QA 4 in parallel → Library 1 sequentially, once at feature level)
+Step 3.95: Review tier selection (cost gate — default = none)
+   ↓
+Step 4: N-persona review per chosen tier (skipped entirely on tier=none)
    ↓
 Step 5: User approval gate (max 3 Edit loops)
    ↓
@@ -144,6 +146,7 @@ type: feature
 created: 2026-04-27
 harness-sf: 0.1.x
 artifacts: 7
+review_tier: standard   # none | light | standard | full — set in Step 3.95
 ---
 
 # {Feature Name} Design
@@ -204,62 +207,9 @@ After saving, show the user the design.md path and request the first review.
 
 ### Step 3.5: design.md confirmation queries (recommend + business reasoning)
 
-Right after the first design.md draft, counter-question the **items requiring user confirmation** via AskUserQuestion. Each question must use this format:
+Right after the first design.md draft, counter-question items requiring user confirmation via AskUserQuestion. Recommendations are **business-first** (incident cost / rollback cost / regret cost), not technical taste.
 
-```
-[Item]: what decision is needed
-[Candidates]: list every reasonable option with [default]/[recommend] tags
-[Recommend reasoning — business-first]: one sentence. Not technical detail.
-[Technical reasoning]: (one-line aside if any)
-```
-
-**Recommend is always written from a business-first perspective**:
-- What reduces **incident cost / rollback cost / loss of trust**?
-- What reduces **user confusion / operational complexity**?
-- What balances **speed-to-launch vs regret cost**?
-- When technical best practice conflicts with business reasoning, business wins
-
-**Confirmation categories** (only ask those that apply, based on Why/What/How/Artifacts of design.md):
-
-1. **Phasing**: all artifacts vs phase split
-   - recommend: with 5+ artifacts or clearly phased intent, **"Phase 1 first"**.
-   - Reason: "Cost of reversing a wrong decision exceeds the cost of fast full launch. Decide Phase 2 after watching usage for 6 months."
-
-2. **Sharing model consistency** (when sObject involved): Private / Public Read Only / Public Read/Write
-   - recommend: typically **`Private`**.
-   - Reason: "Data-exposure incidents have customer-trust + compliance cost; a single incident dwarfs operational convenience ('visible to all')."
-
-3. **Permission Set strategy**: single PS / per-persona split (e.g. Sales PS / Admin PS)
-   - recommend: with 2+ personas explicitly listed, **"split"**.
-   - Reason: "Starting with a single PS leaves no way to narrow blast radius on permission incidents. Splitting later costs more than splitting from day one."
-
-4. **UI exposure scope** (when LWC involved): internal users / partner community / external customers
-   - recommend: if unspecified, **"internal users only (Phase 1)"**.
-   - Reason: "External exposure has different security/UX requirements. Validate internally first to minimize external-incident cost."
-
-5. **External API exposure** (when Apex involved): @AuraEnabled / @RestResource / not exposed
-   - recommend: if the feature does not state external integration, **"not exposed"**.
-   - Reason: "More exposure surface means more security review + version management. Adding it later is cheaper than exposing prematurely."
-
-6. **Data retention policy** (when sObject involved): hard delete / soft delete (Status=Deleted) / archive
-   - recommend: business data (orders/contracts, etc.) → **"soft delete"**; transient data → **"hard delete"**.
-   - Reason: "Recovery requests for deleted business data almost always come (audit/dispute/mistake recovery). Retention cost < irrecoverable cost."
-
-7. **Audit / Field History Tracking** (sObject): on / off
-   - recommend: for money/contract/state-transition fields, **"on (those fields only)"**.
-   - Reason: "If 'who changed what when' cannot be answered during disputes/audits, operational cost explodes. Cost of enabling is negligible."
-
-8. **Migration / handling of existing data** (modify mode or replacement system exists): migration script / new system only / parallel run
-   - recommend: if existing data is stated, **"parallel run (Phase 1)"**.
-   - Reason: "Cutover migration is unrollback-able on incident. Parallel-run cost < data-loss cost."
-
-**Application rules**:
-- design.md draft already has a clear answer → short confirmation "X declared in design.md, confirm? [Y/edit]" instead of a full question.
-- Ambiguous or empty items → full question in the format above.
-- Recommend is not forced — record reason in design.md `## Decisions` if user picks differently (the reviewer references it later).
-- Bundle 1–3 questions at a time — manage user fatigue.
-
-Reflect results in design.md (update sharing modifier in `## Artifacts`, add a `## Phasing` section, etc.) → proceed to Step 4.
+See `references/confirmation-catalog.md` for the 8 confirmation categories (phasing, sharing, PS strategy, UI exposure, API exposure, retention, audit, migration), question format, and application rules. Bundle 1–3 questions at a time. Reflect answers in design.md before Step 3.9.
 
 ### Step 3.9: design.md schema validation (required, before Step 4)
 
@@ -278,28 +228,60 @@ On failure, show the stderr diagnostics to the user, request design.md edits →
 
 On success, stdout returns JSON `{type, name, artifacts, order}` — that `order` becomes the dispatch order candidate for Step 6 (confirmed by the user).
 
-### Step 4: 5-Persona Review (feature level, once)
+### Step 3.95: Review tier selection (cost gate)
 
-**Two-stage invocation** — the library reviewer must use the other 4 reviewers' findings, so order is fixed.
+Full 5-persona review fan-out costs ~60–90k tokens (each sub-agent cold-starts with skill + design.md context). Most plan revisions don't justify it. Pick a tier explicitly before Step 4.
 
-#### Step 4a: Stage 1 — invoke 4 in parallel
+**Auto-suggest rule** (compute first, present as the default option):
+- artifacts ≥ 5, OR new sObject, OR external API exposure (`@RestResource`, Experience Cloud, integration user) → suggest **standard**
+- sharing-model change, OR new Permission Set, OR FLS-sensitive field (compensation, PII, money) → suggest **light** (security)
+- otherwise (small additive change, rev2+ revision of an already-reviewed design, internal-only LWC tweak) → suggest **none**
 
-Use the `Agent` tool to **invoke 4 simultaneously from a single message**, with design.md path as input.
-- `sf-design-ceo-reviewer`
-- `sf-design-eng-reviewer`
-- `sf-design-security-reviewer`
-- `sf-design-qa-reviewer`
+**Force a choice via AskUserQuestion**:
+```
+Review tier (suggested: {auto}):
+  [1] none — proceed without reviewers (single-pass plan; ~0 review tokens)
+  [2] light — 1 reviewer (security if sharing/PS/FLS, else eng) (~12–18k)
+  [3] standard — eng + security + qa, 3 in parallel (~40–55k)
+  [4] full — CEO + eng + security + qa + library (~60–90k)
+```
 
-Append each reviewer output verbatim to design.md `## Reviews` (each preserves its own `# CEO Review:` / `# Eng Review:` ... header).
+Bump up if the feature is release-critical, has compliance/security blast radius, or touches money/auth/contract flows. Drop down when iterating an already-reviewed design (rev N≥2) and only changed a small section.
 
-#### Step 4b: Stage 2 — invoke Library reviewer sequentially
+Record the choice in design.md frontmatter as `review_tier: none|light|standard|full` **before** Step 4 — `validate-design.js` reads it to gate the `--check-library-verdict` check (only `full` enforces a Library Verdict).
+
+If tier=`none`, skip Step 4 entirely and jump to Step 5. `## Reviews` and `## Review Resolution` sections are not written. `## Library Verdict` is not required.
+
+Resume case: if Step 0.3 resumed an in-flight feature, reuse the recorded `review_tier` without re-asking. Only re-ask when the user explicitly bumps to a new revision (`revision: N+1`) and asks to re-review.
+
+### Step 4: N-Persona Review (per Step 3.95 tier)
+
+**Skipped entirely when `review_tier: none`.** Otherwise, fan out per the table:
+
+| Tier | Reviewers | Pattern |
+|---|---|---|
+| `light` | 1 (security if sharing/PS/FLS change, else eng) | sequential |
+| `standard` | eng + security + qa | parallel from a single message |
+| `full` | CEO + eng + security + qa + library | parallel 4 → library sequentially |
+
+`light`/`standard` skip the library reviewer; the verdict gate auto-skips for those tiers (encoded in `validate-design.js`). Only `full` enforces `## Library Verdict`.
+
+#### Step 4a: Invoke per tier
+
+Use the `Agent` tool with design.md path as input. Each reviewer's output is appended verbatim to design.md `## Reviews` (each preserves its own `# {Persona} Review:` header).
+
+- **light** — invoke 1 agent; pick `sf-design-security-reviewer` if any artifact involves sharing/PS/FLS, else `sf-design-eng-reviewer`.
+- **standard** — invoke `sf-design-eng-reviewer` + `sf-design-security-reviewer` + `sf-design-qa-reviewer` simultaneously from a single message (parallel).
+- **full** — invoke `sf-design-ceo-reviewer` + `sf-design-eng-reviewer` + `sf-design-security-reviewer` + `sf-design-qa-reviewer` simultaneously from a single message, then proceed to Step 4b.
+
+#### Step 4b: Library reviewer (full tier only)
 
 After the 4 outputs are reflected in design.md, invoke `sf-design-library-reviewer` (one). At entry it:
 - Reads `.claude/knowledge/library-catalog.md` (mandatory if-then rules)
 - Reads the Eng block in design.md `## Reviews`; if there are "framework / pattern / abstraction / shared module" risk keywords, uses them as library matching candidates
 - Adds a `## Library Verdict` section at the end — classifies every artifact as one of `library-applied` / `library-recommended` / `library-not-applicable`
 
-This order is **enforced, not optional** — `issue-design-approval.js` blocks sentinel issuance when verdict is missing via the `--check-library-verdict` gate.
+This order is **enforced, not optional** for `full` — `issue-design-approval.js` blocks sentinel issuance when verdict is missing via the `--check-library-verdict` gate. For `light`/`standard`/`none`, the gate is bypassed by `review_tier` frontmatter.
 
 #### Per-reviewer perspective
 
@@ -313,121 +295,18 @@ Per-artifact details (sharing modifier choice, etc.) are deferred to the sub-ski
 
 ### Step 5: Review consolidation + user approval gate (tiered decision)
 
-**No bulk proceed for HIGH or for security/deploy/exposure MEDIUM.** Other MEDIUMs may be batch-resolved by category — this preserves the spend-time-on-design principle for high-impact decisions while removing administrative friction on design/test recommendations.
+**Tier=none short-circuit**: if `review_tier: none`, there are no risks to resolve. Skip Step 5.0/5.0.5/5.1 entirely. Show design.md as-is and ask [P]roceed / [E]dit / [A]bort. On [P]roceed, jump to Step 5.2 (the validator will no-op the resolution + library-verdict gates because `## Reviews` is absent).
 
-Risk routing is by reviewer-emitted `category` (parsed from `[H1|category]` notation in `## Reviews`):
+**Otherwise** (tier=light/standard/full), run the two-pass approval gate:
 
-| Risk × Category | Approval |
-|---|---|
-| HIGH (any category) | Per-item, individual approval (Pass 1) |
-| MEDIUM-{security, deploy, exposure} | Per-item, individual approval (Pass 1) |
-| MEDIUM-{test, design} | Bundled approval by category (Pass 2) |
-| LOW (any) | Not asked, retained in Reviews for record |
+- **Pass 1** (Step 5.0) — individual approval for HIGH and MEDIUM-{security, deploy, exposure}. Any [2] revise triggers Step 5.1.5.
+- **Pass 2** (Step 5.0.5) — bundled approval by category for MEDIUM-{test, design}. `[2] Select per-item` falls back to Pass 1 scope.
+- **Step 5.1** writes `## Review Resolution`. HIGH requires per-item response (8+ chars), MEDIUM-{test, design} can be bundled (20+ chars per bundle). LOW is record-only.
+- **Step 5.1.5** (revision flow) — increment frontmatter `revision: N`, set `revision_block_personas: [...]`, archive prior-rev review/resolution to sibling `.archive.md` via `archive-design-revision.js` (keeps active design.md small for sub-agents), re-invoke only those personas. Cap: 5 revisions, or 2 consecutive HIGH from same persona requires override.
 
-Forward-compat: legacy risk lines without category (`[H1]`) are treated as `category=design` (= bundled at MEDIUM, individual at HIGH).
+See `references/approval-gates.md` for the full risk routing table, AskUserQuestion templates, Resolution log schema, and revision flow rules.
 
-#### Step 5.0: Pass 1 — per-item decision loop
-
-Iterate every `[H#|*]` and every `[M#|security]` / `[M#|deploy]` / `[M#|exposure]` in `## Reviews`. For each, force a choice via AskUserQuestion:
-
-```
-[H 1/3] [eng] H1|deploy: sharing modifier missing → add with sharing
-  [1] Proceed — proceed without design changes (record reason in Resolution)
-  [2] Revise — needs design.md augmentation (re-invoke that persona)
-```
-
-A 1-line reason (8+ chars) is mandatory with the answer. This becomes the Resolution log entry. Empty/short responses are blocked by the sentinel and re-prompted.
-
-Rules:
-- **Any HIGH at [2]** → enter the Step 5.1.5 revision loop (re-invoke that persona only).
-- **All HIGH at [1]** → reasons auto-fill the Resolution log, then continue to Pass 2.
-- **MEDIUM-security/deploy/exposure**: same [1]/[2]. Be cautious about [2] re-invocation cost.
-- "Defer / phase 2 / redesign" variants are expressed as [1] + 1-line reason ("defer: phase 2", "redesign: rethink Order structure → abort phase 1").
-
-CEO reviewer's `[H#|design]` Tradeoffs are HIGH and asked per item.
-
-Progress counter: `[H 1/3]`, `[M-individual 2/2]` to display progress.
-
-#### Step 5.0.5: Pass 2 — bundled decision by category
-
-Group remaining MEDIUMs by category: `bundles = { test: [M2, M5], design: [M1, M3, M4] }`.
-
-For each non-empty bundle, summarize and ask via AskUserQuestion (Apply all is the **first/default** option):
-
-```
-[M-bundle test 1/2] 2 MEDIUM test items:
-  - [qa] M2|test: missing bulk-mode test for AccountHandler
-  - [qa] M5|test: assertion only checks count, not state
-
-  [1] Apply all — accept reviewer recommendations (reason 20+ chars required)
-  [2] Select per-item — drop into individual approval for this bundle
-  [3] Defer all — defer to later phase (reason 20+ chars required)
-```
-
-Rules:
-- Bundle reason is **20+ chars** (not 8+) — one line must justify N decisions.
-- `[2] Select per-item` re-enters the Step 5.0 per-item loop for that bundle's items only.
-- `[3] Defer all` records all bundle items as `(deferred)` in Resolution with the same reason.
-- After all bundles processed, the user reviews design.md once more and chooses [P]roceed.
-
-Telemetry: each bundle decision is appended to `.harness-sf/.cache/scores/bundle-decisions.jsonl` as `{ts, slug, action, category, item_count}` for 1-week dogfooding analysis. Run via Bash:
-```bash
-node .claude/hooks/_lib/bundle-telemetry.js record {slug} {category} {action} {item_count}
-```
-
-#### Step 5.1: Write Review Resolution log (required before Step 5.2)
-
-Add a `## Review Resolution` section to design.md — record user responses for every `[H#]` HIGH and `[M#]` MEDIUM risk. Reviewers have no block authority; the block is on *user non-response*.
-
-Schema:
-```markdown
-## Review Resolution
-
-### sf-design-eng-reviewer
-- H1|deploy: switched handler to sync, future call separated into a queueable. (resolved)
-- M1|deploy: keep batch size 200. AccountTrigger averages 50 records, 4x headroom. (not accepted)
-
-### sf-design-security-reviewer
-- H1|security: declared `with sharing`. (resolved)
-- M1|security: deferred to phase 2, out of this feature's scope. (deferred)
-
-### sf-design-ceo-reviewer
-- H1|design: adopted standard Order object after review, custom Order__c dropped. (redesigned)
-
-### Bundled
-- category=test (2 items): accept QA recommendations, will add bulk-mode + state assertion in same PR. (apply_all)
-  - M2|test, M5|test
-- category=design (3 items): defer style-level handler split to phase 2, scope of this feature is data flow only. (defer_all)
-  - M1|design, M3|design, M4|design
-```
-
-Rules:
-- HIGH (`H#`) requires a response — one of "resolved / not accepted / deferred / redesigned" + reason 8+ chars.
-- MEDIUM-{security, deploy, exposure} (`M#`) also needs a 1-line response — explicit "deferred" or "rejected" with 8+ chars.
-- MEDIUM-{test, design} are recorded under `### Bundled` with 20+ char bundle reason and an enumerated ID list. Individual entries under per-persona sections are NOT required for bundle-resolved items.
-- LOW (`L#`) is not mandatory — ignorable.
-- Single-word responses ("ok", "accepted") are blocked by the sentinel.
-
-After writing, the user reviews design.md once more and chooses [P]roceed.
-
-On approval, proceed Step 5.2 → 5.5 → 6. The `## Artifacts` section of design.md is the dispatch task list.
-
-#### Step 5.1.5: Targeted re-review (revision flow)
-
-If 1+ items in Step 5.0 are [2] revise:
-- Guide the user on which design.md section (`## What`, a specific artifact in `## Artifacts`, etc.) to edit.
-- After edits, increment frontmatter `revision: N` to N+1, and record only the personas that issued the [2] risks in `revision_block_personas: [persona-1, persona-2]`.
-- On Step 4 re-run, **invoke only those personas** in parallel (skip the others — cost saving).
-- Mark previous review bodies as `(rev N, superseded)` in `## Reviews` while preserving — audit trace.
-- If new risks emerge after re-invocation, re-enter the Step 5.0 per-risk decision loop.
-- **Iteration cap**: if the same persona issues HIGH twice in a row, require explicit user override via AskUserQuestion:
-  ```
-  [persona] issued HIGH on both revision N and N+1. Proceed without further review?
-    [1] Override — reason required (recorded in Resolution log)
-    [2] Edit design further
-    [3] Abort the feature
-  ```
-- Maximum 5 revisions — beyond that, force abort + tell the user "rethink the feature scope itself".
+On approval (regardless of tier), proceed Step 5.2 → 5.5 → 6. The `## Artifacts` section of design.md is the dispatch task list.
 
 ### Step 5.2: Issue design approval sentinel (required)
 
@@ -514,126 +393,14 @@ For sub-skill-less items like `permission-set`/`flow`, output guidance and immed
 
 Dispatch finishing is not the end. Auto-run validate-only + RunLocalTests; auto-fix mechanical errors (after design-consistency check), defer logical errors or design drift to the user. Iteration cap of 4 stops infinite loops.
 
-#### Step 7.5.0: Initialize validate-loop state
+**Pipeline**:
+1. **7.5.0** init validate-loop state → **7.5.1** run `sf-deploy-validator` (auto-loop mode) → **7.5.2** verdict branch (`ready`→Step 8 / `blocked`→7.5.3).
+2. **7.5.3** classify errors via `classify-deploy-error.js`. Logical errors → user choice (delegate to `/sf-bug-investigator` / fix manually / defer). Mechanical-only → 7.5.4 auto-fix.
+3. **7.5.4** per mechanical error: generate proposal (deterministic per category — `field-not-found` / `fls-missing-in-ps` / `class-access-missing-in-ps` / `cmt-record-missing` / `ps-field-reference-stale`) → design-consistency check via `verify-fix-against-design.js` → apply if consistent, else 3-way branch (code-correct / design-correct / defer).
+4. **7.5.5** design-correction loop (reuses Step 5.1.5 revision flow) — Library Verdict update only required for `review_tier: full`.
+5. **7.5.6** cap reached (4 iterations) → user choice (redesign / abort artifact / override).
 
-```bash
-node .claude/hooks/_lib/validate-loop-state.js init {feature-slug}
-```
-
-#### Step 7.5.1: Run deploy validate (auto-loop mode)
-
-Invoke `sf-deploy-validator` via the `Agent` tool. State `--auto-loop {feature-slug}` context in the prompt — the agent Writes results to `.harness-sf/.cache/deploy-findings/{slug}.json`.
-
-#### Step 7.5.2: Verdict branching
-
-```bash
-cat .harness-sf/.cache/deploy-findings/{feature-slug}.json | jq -r .verdict
-```
-
-- `ready` → proceed to Step 8 (report). Clean up validate-loop state (`reset` call).
-- `blocked` → proceed to Step 7.5.3 classification.
-
-#### Step 7.5.3: Error classification
-
-```bash
-node .claude/hooks/_lib/classify-deploy-error.js \
-  .harness-sf/.cache/deploy-findings/{feature-slug}.json \
-  --out .harness-sf/.cache/deploy-classify/{feature-slug}.json
-```
-
-Branch on classification (`auto_fix_eligible: true|false`):
-
-- `auto_fix_eligible: false` (contains 1+ logical errors) → **do not attempt auto-fix**. Show classification table to the user + AskUserQuestion:
-  ```
-  Logical errors present, outside auto-fix scope.
-    [1] Delegate to /sf-bug-investigator (root cause analysis)
-    [2] Fix manually
-    [3] Defer (no sentinel issued, follow-up by user)
-  ```
-- `auto_fix_eligible: true` (mechanical only) → enter the Step 7.5.4 auto-fix loop.
-
-#### Step 7.5.4: Auto-fix attempts per mechanical error
-
-Process each mechanical error in classification sequentially:
-
-**(a) Generate fix proposal** — deterministic transformation per error category:
-
-| category | proposal action | example |
-|---|---|---|
-| `field-not-found` (typo: code → existing field) | `typo` | `from: Recpient__c` → `to: Recipient__c` (canonical name in design) |
-| `fls-missing-in-ps` | `add` | add fieldPermissions block in PS XML |
-| `class-access-missing-in-ps` | `add` | add classAccesses block in PS XML |
-| `cmt-record-missing` | `add` | create customMetadata/{type}.{record}.md-meta.xml |
-| `ps-field-reference-stale` | `remove` | remove stale fieldPermissions line from PS |
-
-**(b) Design-consistency check**:
-
-```bash
-echo '<proposal-json>' | node .claude/hooks/_lib/verify-fix-against-design.js \
-  --design .harness-sf/designs/{YYYY-MM-DD}-feature-{slug}.md \
-  --proposal -
-```
-
-`consistent: true` → (c). `consistent: false` → (d) 3-way branch.
-
-**(c) Apply automatically (consistent)**:
-
-1. Apply fix via Edit tool (file_path)
-2. `node .claude/hooks/_lib/validate-loop-state.js incr {slug} code-fix --note "<category>:<target>"` — auto-abort and delegate to user when cap reached
-3. Once all mechanical errors are processed, loop back to Step 7.5.1 (revalidate)
-
-**(d) 3-way branch (inconsistent — disagrees with design)**:
-
-Force a choice via AskUserQuestion:
-
-```
-Mechanical auto-fix proposal disagrees with the design.
-Target: {target} ({category})
-Proposal: {action} {to_value}
-Design evidence: {evidence_or_"not declared in design"}
-
-  [1] Code correction — design is correct, apply auto-fix as proposed
-  [2] Design correction — design is missing/incorrect, augment then re-dispatch
-  [3] Defer — user decides manually
-```
-
-Per-branch handling:
-- `[1]` → apply Edit + `incr code-fix`. Abort on cap.
-- `[2]` → enter Step 7.5.5 design-correction loop.
-- `[3]` → mark this error Skip, move to next mechanical error. After all mechanicals are processed (with any Skips), proceed to Step 8 noting "user follow-ups: N items".
-
-#### Step 7.5.5: Design-correction loop (reuses Step 5.1.5 revision flow)
-
-1. Use AskUserQuestion to narrow which artifact's which item to augment.
-2. Edit design.md + increment frontmatter `revision: N+1` + record `revision_block_personas: [eng, library, (optional) security]`.
-3. **Re-invoke only the affected personas** (re-run Step 4, but not all 4).
-4. Update `## Library Verdict`.
-5. Re-pass the resolution gate:
-   ```bash
-   node .claude/hooks/_lib/issue-design-approval.js .harness-sf/designs/{...}.md
-   ```
-6. Reset only affected artifacts in dispatch-state to `pending`:
-   ```bash
-   node .claude/hooks/_lib/dispatch-state-cli.js reset {slug} {affected-artifact-id} [...]
-   ```
-7. Re-dispatch the affected artifacts (Step 6.1).
-8. `node .claude/hooks/_lib/validate-loop-state.js incr {slug} design-fix --note "<artifact-id>: <change summary>"` — abort on cap.
-9. Loop back to Step 7.5.1 (revalidate).
-
-#### Step 7.5.6: When cap is reached
-
-`incr` returns exit 1 + cap-exceeded:
-
-```
-Artifact 'X' triggered design corrections twice in a row at deploy stage,
-or total auto-fix cap of 4 reached.
-
-  [1] Redesign the feature scope (start sf-feature over)
-  [2] Abort just this artifact, continue with the rest (mark exclusion in dispatch-state)
-  [3] Override — force ahead without further corrections (1-line reason required, no validate sentinel issued)
-```
-
-Record the choice as one line in design.md `## Dispatch Log`.
+See `references/auto-fix-loop.md` for the full error category matrix, AskUserQuestion templates, design-consistency check command, and per-branch handling.
 
 ### Step 8: Report
 

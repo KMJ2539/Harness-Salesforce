@@ -422,7 +422,14 @@ const libraryVerdictReport = { checked: false, found: false, missing_artifacts: 
 if (checkLibraryVerdict && type === 'feature') {
   libraryVerdictReport.checked = true;
   const reviewsSection = extractSection(text, 'Reviews');
-  if (reviewsSection && reviewsSection.replace(/\s/g, '').length > 0) {
+  // Library reviewer only runs on review_tier=full. For light/standard, the
+  // verdict section won't exist by design — skip the gate. Missing review_tier
+  // (legacy designs) keeps the strict default.
+  const reviewTier = (fm.review_tier || '').toLowerCase();
+  const tierSkipsLibrary = ['none', 'light', 'standard'].includes(reviewTier);
+  if (tierSkipsLibrary) {
+    libraryVerdictReport.skipped_for_tier = reviewTier;
+  } else if (reviewsSection && reviewsSection.replace(/\s/g, '').length > 0) {
     const { found, entries } = parseLibraryVerdict(text);
     libraryVerdictReport.found = found;
     if (!found) {
