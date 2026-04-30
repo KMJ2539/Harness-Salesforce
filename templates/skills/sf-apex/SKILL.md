@@ -47,10 +47,14 @@ node .claude/hooks/_lib/check-delegated-token.js <design-md-path> <artifact-id>
 **Delegated mode behavior**:
 1. `Read` the feature design.md.
 2. Extract the matching artifact entry from the `## Artifacts` section — type, name, role, dependencies, sharing modifier, and other intent information are there.
-3. **Skip Step 1, 1.5, 1.7, and 1.9 entirely** — design and review have already been completed at the feature level.
-4. Start from Step 2 (context-explorer). The intent source is the artifact section in the feature design.md instead of a user dialogue.
-5. When code work completes, the caller (/sf-feature) updates status via `dispatch-state-cli done {slug} {id}` (canonical state.json under the hood) — this sub-skill only appends one line to design.md `## Dispatch Log`.
-6. On failure, return an error summary to the caller (the caller handles `dispatch-state-cli fail`).
+3. **Idempotency check (P3 — resume safety)**: read the canonical state.json for this feature slug (`.harness-sf/state/<slug>__r<rev>.json`). Find the entry with this `artifact_id`:
+   - `status === 'done'` → exit immediately (no-op). Print `idempotent: <id> already done`.
+   - `status === 'in_progress'` → ask the user via AskUserQuestion: `[Continue / Restart / Skip]`. Continue = proceed; Restart = reset state to `pending` then proceed; Skip = exit.
+   - `pending` / `failed` / not yet present → proceed normally.
+4. **Skip Step 1, 1.5, 1.7, and 1.9 entirely** — design and review have already been completed at the feature level.
+5. Start from Step 2 (context-explorer). The intent source is the artifact section in the feature design.md instead of a user dialogue.
+6. When code work completes, the caller (/sf-feature) updates status via `dispatch-state-cli done {slug} {id}` (canonical state.json under the hood) — this sub-skill only appends one line to design.md `## Dispatch Log`.
+7. On failure, return an error summary to the caller (the caller handles `dispatch-state-cli fail`).
 
 **Standalone mode** (default / no sentinel): start from Step 0.3 below.
 

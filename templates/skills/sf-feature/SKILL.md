@@ -35,6 +35,40 @@ Step 7.5: Auto deploy validate + auto-fix loop (mechanical/logical classificatio
 Step 8: Report
 ```
 
+### Step 0.3: Resume detection (P3)
+
+Before any new intent collection, check whether an in-flight feature dispatch already exists. If so, present the user a 3-way choice instead of starting from scratch.
+
+```bash
+node .claude/hooks/_lib/dispatch-state-cli.js list-incomplete
+```
+
+The command returns a JSON array of slugs whose canonical state has at least one artifact in `pending`/`in_progress`/`failed`. Stale state (mtime > 7 days) is hidden by default — re-run with `--all` only if the user explicitly references an old feature.
+
+**Branching**:
+- Empty array → proceed to Step 0.5 (no in-flight work).
+- One or more entries → ask the user via AskUserQuestion:
+
+  ```
+  Found in-flight feature: <slug> (<incomplete> incomplete, <age_days>d old)
+    [1] Resume — re-enter Step 6 (dispatch); skip intent/decomposition/review
+    [2] Show status — print full state and ask again
+    [3] Start new — begin a fresh feature (the old slug stays as-is)
+  ```
+
+If user picks **Resume**:
+1. `node .claude/hooks/_lib/dispatch-state-cli.js resume <slug>` — flips every `failed` artifact back to `pending` and prints `{next, done, total, all_complete}`.
+2. Verify the design approval sentinel for that slug. If TTL expired:
+   - design.md body hash unchanged → re-issue automatically (`issue-design-approval.js`); no user re-confirmation needed (same design, same decisions).
+   - design.md body hash changed → reject resume; instruct the user to start a new revision (`/sf-feature` with the same slug + revision bump).
+3. Skip Step 1–5 entirely. Jump to Step 6 starting from the `next` artifact id printed by `resume`.
+
+If user picks **Show status**: run `dispatch-state-cli.js status <slug>` and re-prompt.
+
+If user picks **Start new**: continue to Step 0.5 normally. Do not delete the existing slug's state — name collision is the user's responsibility.
+
+The explicit form `/sf-feature resume <slug>` (slug given on entry) skips the AskUserQuestion and goes straight to the Resume branch.
+
 ### Step 0.5: Project convention check
 
 Project conventions (`PROJECT.md` + `local.md`) are injected as session-start context by the SessionStart hook. No additional Read needed. If injection is not visible (hook-less), fall back to `Read .harness-sf/PROJECT.md` and `Read .harness-sf/local.md`.
@@ -134,6 +168,8 @@ artifacts: 7
 - Migration: ...
 
 ## Artifacts
+
+<!-- [status: ...] tags below are initial plan markers only — runtime status lives in canonical .harness-sf/state/<slug>__r<rev>.json. Do not edit these tags during dispatch. -->
 
 ### 1. order-sobject  [type: sobject]  [status: pending]
 - API name: Order__c
@@ -423,10 +459,10 @@ node .claude/hooks/_lib/dispatch-state-cli.js start {feature-slug} {artifact-id}
 
 The sub-skill reads the matching artifact section in design.md to grasp intent and proceeds with code work without its own design step. No per-artifact review (the feature review covers it).
 
-**4. Record results**:
-- Success: `dispatch-state-cli.js done {slug} {id}` + one line in design.md `## Dispatch Log` + `## Artifacts` status `pending → done`
-- Failure: `dispatch-state-cli.js fail {slug} {id} "error summary"` + design.md status `failed`, ask user [Retry / Skip / Abort]
-- If a depended-on artifact is failed, mark subsequent dispatches as `skip` and report
+**4. Record results** (canonical state.json is the single source of truth — never edit `## Artifacts [status: ...]` at runtime; that tag is an initial plan marker only):
+- Success: `dispatch-state-cli.js done {slug} {id}` + one line append in design.md `## Dispatch Log` (e.g. `2026-04-30 14:23 order-handler done`)
+- Failure: `dispatch-state-cli.js fail {slug} {id} "error summary"` + one line in `## Dispatch Log`, ask user [Retry / Skip / Abort]
+- If a depended-on artifact is failed, mark subsequent dispatches as `skip` via `dispatch-state-cli.js` and report
 
 For sub-skill-less items like `permission-set`/`flow`, output guidance and immediately mark `done` (or after the user does manual work).
 

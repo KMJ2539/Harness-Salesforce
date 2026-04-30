@@ -19,7 +19,7 @@ node .claude/hooks/_lib/check-delegated-token.js <design-md-path> <artifact-id>
 ```
 exit 0 → delegated; exit 1 → standalone.
 
-**Delegated**: load the sobject artifact from design.md `## Artifacts` (API name, label, sharing, name field, …), skip Steps 1–1.9, start at Step 2. On done/fail append one line to `## Dispatch Log`; the caller updates state.json.
+**Delegated**: load the sobject artifact from design.md `## Artifacts` (API name, label, sharing, name field, …). **Idempotency check (P3)**: read canonical state.json; `done` → exit no-op; `in_progress` → AskUserQuestion `[Continue / Restart / Skip]`. Then skip Steps 1–1.9, start at Step 2. On done/fail append one line to `## Dispatch Log`; the caller updates state.json.
 
 Standalone → continue.
 

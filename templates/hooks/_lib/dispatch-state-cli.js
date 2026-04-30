@@ -17,6 +17,8 @@
 //   skip   <slug> <artifact-id> "<reason>"
 //   status <slug>            → prints summary
 //   reset  <slug> <artifact-id> [...]   → mark each as 'pending' again
+//   list-incomplete [--all|--max-age-days=N]  → JSON list of slugs with incomplete artifacts (default hides mtime > 7d)
+//   resume <slug>            → flip all 'failed' → 'pending', print JSON {next, done, total, all_complete}
 
 'use strict';
 const fs = require('fs');
@@ -187,14 +189,139 @@ try {
       const total = cur.state.artifacts.length;
       const done = cur.state.artifacts.filter(a => a.status === 'done').length;
       const failed = cur.state.artifacts.filter(a => a.status === 'failed').length;
+
+      // P1 — share state-summary so cli `status` and statusline never drift.
+      // The summary's slug detection uses the newest design.md; here we want
+      // the explicitly-requested slug, so we compute the same shape inline
+      // for slug-targeted fields and only borrow approval/last-validation.
+      let phase, current = null, approvalTtlMs = null, approvalKind = null;
+      try {
+        const summary = require('./state-summary').summarize();
+        if (summary && summary.designSlug === slug) {
+          phase = summary.phase;
+          current = summary.current;
+        }
+        approvalTtlMs = summary ? summary.approvalTtlMs : null;
+        approvalKind = summary ? summary.approvalKind : null;
+      } catch { /* helper optional */ }
+      if (!phase) {
+        const incomplete = cur.state.artifacts.some(a => a.status !== 'done' && a.status !== 'skipped');
+        phase = incomplete ? 'build' : 'validate';
+      }
+      if (!current) {
+        const ip = cur.state.artifacts.find(a => a.status === 'in_progress');
+        if (ip) current = ip.id;
+      }
+
       process.stdout.write(`${slug}__r${rev}: ${done}/${total}${failed ? `!${failed}` : ''} (step=${cur.state.current_step}, version=${cur.version})\n`);
+      process.stdout.write(`  phase=${phase}\n`);
+      if (current) process.stdout.write(`  current=${current}\n`);
+      if (failed > 0) process.stdout.write(`  failed=${failed}\n`);
+      if (approvalTtlMs !== null) {
+        const min = Math.floor(approvalTtlMs / 60000);
+        const tag = (approvalKind || '').replace(/-approvals$/, '') || 'approval';
+        process.stdout.write(approvalTtlMs <= 0
+          ? `  approval=expired(${tag})\n`
+          : `  approval=${min}m(${tag})\n`);
+      }
       for (const a of cur.state.artifacts) {
         process.stdout.write(`  [${a.status}] ${a.id} (${a.type})\n`);
       }
       break;
     }
+    case 'list-incomplete': {
+      // P3 — resume detection. Lists slugs with at least one artifact in
+      // {pending, in_progress, failed}. Stale state (mtime > 7 days) is
+      // hidden from the auto-detection list (still accessible via explicit
+      // `resume <slug>`). Use --max-age-days=N to override; --all disables
+      // the staleness filter entirely.
+      const ALL = rest.includes('--all');
+      const maxAgeArg = rest.find(a => a.startsWith('--max-age-days='));
+      const maxAgeDays = maxAgeArg ? parseInt(maxAgeArg.split('=')[1], 10) : 7;
+      const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+
+      const dir = path.join(process.cwd(), '.harness-sf', 'state');
+      if (!fs.existsSync(dir)) { process.stdout.write('[]\n'); break; }
+      const re = /^([a-z0-9-]+)__r(\d+)\.json$/;
+      const entries = fs.readdirSync(dir)
+        .map(f => ({ f, m: f.match(re) }))
+        .filter(x => x.m);
+
+      // Group by slug, keep the highest revision per slug.
+      const bySlug = new Map();
+      for (const { f, m } of entries) {
+        const slug = m[1];
+        const rev = parseInt(m[2], 10);
+        const prev = bySlug.get(slug);
+        if (!prev || rev > prev.rev) bySlug.set(slug, { f, rev });
+      }
+
+      const now = Date.now();
+      const out = [];
+      for (const [slug, { f, rev }] of bySlug) {
+        const abs = path.join(dir, f);
+        let stat;
+        try { stat = fs.statSync(abs); } catch { continue; }
+        const ageMs = now - stat.mtimeMs;
+        if (!ALL && ageMs > maxAgeMs) continue;
+        let s;
+        try { s = JSON.parse(fs.readFileSync(abs, 'utf8')); } catch { continue; }
+        if (!s || !Array.isArray(s.artifacts)) continue;
+        const incomplete = s.artifacts.filter(a =>
+          a.status === 'pending' || a.status === 'in_progress' || a.status === 'failed'
+        );
+        if (!incomplete.length) continue;
+        out.push({
+          slug,
+          revision: rev,
+          age_days: Math.floor(ageMs / (24 * 60 * 60 * 1000)),
+          incomplete: incomplete.map(a => ({ id: a.id, type: a.type, status: a.status })),
+          stale: ageMs > maxAgeMs,
+        });
+      }
+      out.sort((a, b) => a.age_days - b.age_days);
+      process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+      break;
+    }
+    case 'resume': {
+      // P3 — resume entry point. Converts every `failed` artifact back to
+      // `pending` so the dispatch loop can re-run it, and prints the next
+      // artifact id to dispatch (or 'done' if everything is complete).
+      const [slug] = rest;
+      if (!slug) fail('resume requires <slug>');
+      const rev = findRevision(slug);
+      if (rev === null) fail(`no canonical state for slug '${slug}'`, 2);
+
+      const next = store.writeState(slug, rev, (cur) => {
+        if (!cur) return null;
+        const copy = JSON.parse(JSON.stringify(cur));
+        for (const a of copy.artifacts) {
+          if (a.status === 'failed') {
+            a.status = 'pending';
+            a.completed_at = null;
+          }
+        }
+        return copy;
+      }, { operation: 'dispatch:resume' });
+      if (!next) process.exit(2);
+
+      const arts = next.artifacts;
+      const nextArt = arts.find(a => a.status === 'pending' || a.status === 'in_progress');
+      const total = arts.length;
+      const done = arts.filter(a => a.status === 'done').length;
+      const result = {
+        slug,
+        revision: rev,
+        next: nextArt ? { id: nextArt.id, type: nextArt.type, status: nextArt.status } : null,
+        done,
+        total,
+        all_complete: !nextArt,
+      };
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      break;
+    }
     default:
-      fail(`unknown command '${cmd || ''}' — use init|start|done|fail|skip|status|reset`);
+      fail(`unknown command '${cmd || ''}' — use init|start|done|fail|skip|status|reset|resume|list-incomplete`);
   }
   process.exit(0);
 } catch (e) {

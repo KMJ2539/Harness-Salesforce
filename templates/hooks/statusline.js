@@ -1,11 +1,22 @@
 #!/usr/bin/env node
-// harness-sf statusLine. One line: target-org · active design · dispatch progress · last validation age.
+// harness-sf statusLine. One line:
+//   🔧 sf-harness · org:X · design:Y · phase:build · current:Z · dispatch:2/5 · failed:1 · approval:23m · step:7.5 · val:1h
+//
+// Token rules (P1 — observability):
+//   - phase: omitted when no design.md (idle); shown otherwise.
+//   - current: shown only when state has an in_progress artifact (typically build phase).
+//   - dispatch: shown when state.json exists; format is `done/total` (failed split out).
+//   - failed: shown only when failed > 0.
+//   - approval: shown only when remainingMs < 60m (or expired); names the closest-to-expiry sentinel.
+//   - val: last-validation age, always when available.
+//
 // Reads stdin (Claude session JSON) but doesn't require it. Best-effort, never errors.
 
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { summarize } = require('./_lib/state-summary');
 
 const cwd = process.cwd();
 const harnessDir = path.join(cwd, '.harness-sf');
@@ -44,53 +55,27 @@ if (!org) {
   }
 }
 
-// 2. most-recent design.md
-let design = null;
-let dispatchSummary = null;
-let dispatchFailed = false;
-safe(() => {
-  const dir = path.join(harnessDir, 'designs');
-  if (!fs.existsSync(dir)) return;
-  const files = fs.readdirSync(dir)
-    .filter(f => f.endsWith('.md'))
-    .map(f => ({ f, m: fs.statSync(path.join(dir, f)).mtimeMs }))
-    .sort((a, b) => b.m - a.m);
-  if (!files.length) return;
-  design = files[0].f;
-});
+// 2. shared state summary (P1)
+const sum = summarize({ cwd });
 
-// 2b. dispatch — read from canonical .harness-sf/state/<slug>__r<rev>.json.
-//      Legacy .cache/dispatch-state/ fallback removed in PR E.
+// 2b. read state.json directly only for the auxiliary fields (current_step / entered_via)
+//     that aren't part of state-summary's contract.
 let currentStep = null;
 let enteredVia = null;
 safe(() => {
   const stateDir = path.join(harnessDir, 'state');
-  if (!fs.existsSync(stateDir)) return;
+  if (!sum.designSlug || !fs.existsSync(stateDir)) return;
+  const escaped = sum.designSlug.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const re = new RegExp(`^${escaped}__r(\\d+)\\.json$`);
   const files = fs.readdirSync(stateDir)
-    .filter(f => /^[a-z0-9-]+__r\d+\.json$/.test(f))
-    .map(f => ({ f, m: fs.statSync(path.join(stateDir, f)).mtimeMs }))
-    .sort((a, b) => b.m - a.m);
+    .map(f => ({ f, m: f.match(re) }))
+    .filter(x => x.m)
+    .sort((a, b) => parseInt(b.m[1], 10) - parseInt(a.m[1], 10));
   if (!files.length) return;
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, files[0].f), 'utf8'));
-  if (!state || !Array.isArray(state.artifacts)) return;
-  const total = state.artifacts.length;
-  const done = state.artifacts.filter(a => a.status === 'done').length;
-  const failed = state.artifacts.filter(a => a.status === 'failed').length;
-  dispatchSummary = `${done}/${total}${failed ? `!${failed}` : ''}`;
-  dispatchFailed = failed > 0;
-  if (state.current_step) currentStep = state.current_step;
-  if (state.entered_via) enteredVia = state.entered_via;
+  if (state && state.current_step) currentStep = state.current_step;
+  if (state && state.entered_via) enteredVia = state.entered_via;
 });
-
-// 2c. fallback to design.md scan if no dispatch-state yet
-if (design && !dispatchSummary) {
-  safe(() => {
-    const body = fs.readFileSync(path.join(harnessDir, 'designs', design), 'utf8');
-    const all = (body.match(/\[status:\s*\w+\]/g) || []);
-    const done = (body.match(/\[status:\s*done\]/g) || []);
-    if (all.length) dispatchSummary = `${done.length}/${all.length}`;
-  });
-}
 
 // 2d. quality score (most recent slug's aggregate)
 let scoreSummary = null;
@@ -113,31 +98,41 @@ safe(() => {
   scoreSummary = `${agg}/10 (${present.length}/4)`;
 });
 
-// 3. last-validation age
-let lastVal = null;
-safe(() => {
-  const p = path.join(harnessDir, 'last-validation.json');
-  if (!fs.existsSync(p)) return;
-  const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-  if (data && data.validated_at) {
-    const ageMs = Date.now() - new Date(data.validated_at).getTime();
-    if (Number.isFinite(ageMs) && ageMs >= 0) {
-      const m = Math.floor(ageMs / 60000);
-      lastVal = m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
-    }
-  }
-});
+function fmtAgeMs(ageMs) {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return null;
+  const m = Math.floor(ageMs / 60000);
+  return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
+}
+
+function fmtApproval(remainingMs, kind) {
+  if (remainingMs <= 0) return `approval:expired(${kind})`;
+  const m = Math.floor(remainingMs / 60000);
+  return `approval:${m}m(${kind.replace(/-approvals$/, '')})`;
+}
 
 const parts = ['🔧 sf-harness'];
 if (org && org.value) parts.push(`org:${org.value}`);
-if (design) {
-  const short = design.replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
+
+if (sum.hasDesign) {
+  const short = sum.designFile.replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
   parts.push(`design:${short.slice(0, 28)}`);
+  parts.push(`phase:${sum.phase}`);
 }
-if (dispatchSummary) parts.push(`dispatch:${dispatchSummary}${dispatchFailed ? ' ✗' : ''}`);
+
+if (sum.current) parts.push(`current:${sum.current}`);
+
+if (sum.total > 0) parts.push(`dispatch:${sum.done}/${sum.total}`);
+if (sum.failed > 0) parts.push(`failed:${sum.failed}`);
+
+if (sum.approvalTtlMs !== null && sum.approvalTtlMs < 60 * 60 * 1000) {
+  parts.push(fmtApproval(sum.approvalTtlMs, sum.approvalKind));
+}
+
 if (enteredVia && enteredVia !== 'full') parts.push(`[${enteredVia}]`);
 if (currentStep) parts.push(`step:${currentStep}`);
 if (scoreSummary) parts.push(`score:${scoreSummary}`);
+
+const lastVal = fmtAgeMs(sum.lastValidationAgeMs);
 if (lastVal) parts.push(`val:${lastVal}`);
 
 process.stdout.write(parts.join(' · '));

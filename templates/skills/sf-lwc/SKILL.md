@@ -27,6 +27,7 @@ exit 0 → delegated mode confirmed; exit 1 → standalone.
 
 **Delegated mode behavior**:
 - Load the matching LWC artifact section from design.md `## Artifacts` (name, exposure location, data source, @api surface, etc.).
+- **Idempotency check (P3)**: read canonical state.json for this slug. If this artifact id is `done` → exit no-op (`idempotent: <id> already done`). If `in_progress` → AskUserQuestion `[Continue / Restart / Skip]`. Otherwise proceed.
 - Skip Steps 1–1.9.
 - Start from Step 2; intent comes from design.md.
 - On completion/failure, the caller (/sf-feature) updates status via dispatch-state-cli (writes canonical state.json) — this sub-skill only appends one line to design.md `## Dispatch Log`.
