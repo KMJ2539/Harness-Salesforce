@@ -19,15 +19,17 @@
 const fs = require('fs');
 const path = require('path');
 const sentinel = require('./_lib/sentinel');
+const { emitBlock } = require('./_lib/gate-output');
 
 const TTL_MS = 2 * 60 * 60 * 1000;
 const KIND = 'design-approvals';
 const GATED_PATH_RE = /^force-app\/main\/default\/(classes|triggers|lwc|aura|objects)\//;
+const CREATE_OVERRIDE = "HARNESS_OVERRIDE=create with audit reason (≥8 chars; 1-hour session, 1 use)";
 
 function readStdin() { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } }
 
-function deny(msg) {
-  process.stderr.write(`[harness-sf] ${msg}\n`);
+function deny(block) {
+  emitBlock(block);
   process.exit(2);
 }
 
@@ -81,13 +83,13 @@ function findFreshDesignSentinel() {
   // CREATE mode — require ANY fresh design approval.
   const s = findFreshDesignSentinel();
   if (!s) {
-    deny(
-      `create gate: '${rel}' is a new file but no fresh design approval sentinel found.\n` +
-      `  design-first flow: enter via /sf-apex, /sf-lwc, /sf-sobject, or /sf-feature and\n` +
-      `  complete through Step 1.9 (5-persona review approval) — sentinel is issued automatically.\n` +
-      `  Manual: node .claude/hooks/_lib/issue-design-approval.js .harness-sf/designs/{your-design}.md\n` +
-      `  Escape hatch: HARNESS_SF_OVERRIDE='create:<reason>' (>= 8 chars)`
-    );
+    deny({
+      reason: `creating new file '${rel}' without a fresh design approval sentinel`,
+      why: 'design-first principle: every new SF source artifact must be backed by an approved design.md (5-persona review at Step 1.9 issues the sentinel)',
+      fix: 'enter via /sf-apex, /sf-lwc, /sf-sobject, or /sf-feature and progress through Step 1.9; or manually: node .claude/hooks/_lib/issue-design-approval.js .harness-sf/designs/{your-design}.md',
+      file: '.harness-sf/.cache/design-approvals/',
+      override: CREATE_OVERRIDE,
+    });
   }
 
   process.exit(0);

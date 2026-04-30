@@ -14,14 +14,16 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const sentinel = require('./_lib/sentinel');
+const { emitBlock } = require('./_lib/gate-output');
 
 const TTL_MS = 30 * 60 * 1000;
 const KIND = 'library-approvals';
+const LIBRARY_OVERRIDE = "HARNESS_OVERRIDE=library with audit reason (≥8 chars; 1-hour session, 1 use)";
 
 function readStdin() { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } }
 
-function deny(msg) {
-  process.stderr.write(`[harness-sf] ${msg}\n`);
+function deny(block) {
+  emitBlock(block);
   process.exit(2);
 }
 
@@ -79,22 +81,37 @@ function keyForIdentifier(method, identifier) {
   if (!hit) process.exit(0);
 
   const key = keyForIdentifier(hit.method, hit.identifier);
+  const sentinelPath = `.harness-sf/.cache/${KIND}/${key}.json`;
   const s = sentinel.readSentinel(KIND, key);
   if (!s) {
-    deny(
-      `library gate: install of ${hit.method}='${hit.identifier}' has no approval sentinel.\n` +
-      `  Run /sf-library-install — it will show the plan, get your approval, and issue:\n` +
-      `    node .claude/hooks/_lib/issue-library-approval.js ${hit.method} '${hit.identifier}'`
-    );
+    deny({
+      reason: `library install of ${hit.method}='${hit.identifier}' has no approval sentinel`,
+      why: 'external code introduces supply-chain + security review obligations — every install must pass through /sf-library-install',
+      fix: `run /sf-library-install (shows plan, gets approval, issues sentinel via issue-library-approval.js ${hit.method} '${hit.identifier}')`,
+      file: sentinelPath,
+      override: LIBRARY_OVERRIDE,
+    });
   }
 
   const v = sentinel.validate(s, TTL_MS);
   if (!v.ok) {
-    deny(`library gate: approval for ${hit.method}='${hit.identifier}' rejected — ${v.reason}. Re-approve via /sf-library-install.`);
+    deny({
+      reason: `library approval for ${hit.method}='${hit.identifier}' rejected (${v.reason})`,
+      why: 'sentinel expired, tampered, or HEAD changed — library approvals are tree-bound',
+      fix: 're-approve via /sf-library-install',
+      file: sentinelPath,
+      override: LIBRARY_OVERRIDE,
+    });
   }
 
   if (s.method !== hit.method || s.identifier !== hit.identifier) {
-    deny(`library gate: sentinel mismatch (sentinel='${s.method}:${s.identifier}', requested='${hit.method}:${hit.identifier}'). Re-issue approval.`);
+    deny({
+      reason: 'library sentinel mismatch',
+      why: `sentinel encodes '${s.method}:${s.identifier}' but command requests '${hit.method}:${hit.identifier}'`,
+      fix: 're-run /sf-library-install for the actual identifier',
+      file: sentinelPath,
+      override: LIBRARY_OVERRIDE,
+    });
   }
 
   process.exit(0);

@@ -12,6 +12,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { emitBlock } = require('./_lib/gate-output');
 
 // Per-agent allowed path prefixes (project-relative). Reviewers are absent → Read-only.
 const ALLOWED = {
@@ -47,8 +48,8 @@ function relativize(p) {
   return rel;
 }
 
-function deny(msg) {
-  process.stderr.write(`[harness-sf] ${msg}\n`);
+function deny(block) {
+  emitBlock(block);
   process.exit(2);
 }
 
@@ -67,7 +68,13 @@ const PROFILE_PATH_RE = /(^|\/)force-app\/.+\/profiles\/.+\.profile-meta\.xml$/;
 
   if (filePath && PROFILE_PATH_RE.test(relativize(filePath))) {
     if (process.env.HARNESS_SF_ALLOW_PROFILE_EDIT !== '1') {
-      deny(`Profile edits are forbidden — use a Permission Set instead. Escape hatch: HARNESS_SF_ALLOW_PROFILE_EDIT=1. (path: ${filePath})`);
+      deny({
+        reason: 'profile XML edits are forbidden by harness-sf policy',
+        why: 'permission management belongs in Permission Sets, not Profiles — profile drift is the most common cause of access-control incidents',
+        fix: 'create or edit a Permission Set under force-app/main/default/permissionsets/ instead',
+        file: filePath,
+        override: 'HARNESS_SF_ALLOW_PROFILE_EDIT=1 (use only for profile bootstrap; record reason)',
+      });
     }
   }
 
@@ -75,7 +82,13 @@ const PROFILE_PATH_RE = /(^|\/)force-app\/.+\/profiles\/.+\.profile-meta\.xml$/;
   if (!filePath) process.exit(0);
 
   if (FORBIDDEN_AGENTS.has(agent)) {
-    deny(`agent '${agent}' is read-only (reviewer) — Write/Edit denied for ${filePath}`);
+    deny({
+      reason: `reviewer agent '${agent}' attempted Write/Edit`,
+      why: 'reviewers are read-only by contract — their output flows back through the orchestrator skill, not direct file writes',
+      fix: 'return findings as structured text instead; the calling skill will persist them to design.md `## Reviews`',
+      file: filePath,
+      override: 'N/A — fix the underlying issue',
+    });
   }
 
   const prefixes = ALLOWED[agent];
@@ -84,7 +97,13 @@ const PROFILE_PATH_RE = /(^|\/)force-app\/.+\/profiles\/.+\.profile-meta\.xml$/;
   const rel = relativize(filePath);
   const escapesRoot = rel.startsWith('..');
   if (escapesRoot) {
-    deny(`agent '${agent}' attempted Write outside project root: ${filePath}`);
+    deny({
+      reason: `agent '${agent}' attempted Write outside project root`,
+      why: 'path-prefix policy keeps subagent writes inside the project so audits/cleanup remain bounded',
+      fix: `rewrite to a project-relative path under one of: ${prefixes.join(', ')}`,
+      file: filePath,
+      override: 'N/A — fix the underlying issue',
+    });
   }
 
   const ok = prefixes.some(pre => {
@@ -92,7 +111,13 @@ const PROFILE_PATH_RE = /(^|\/)force-app\/.+\/profiles\/.+\.profile-meta\.xml$/;
     return rel === pre;
   });
   if (!ok) {
-    deny(`agent '${agent}' Write to '${rel}' violates path policy. Allowed prefixes: ${prefixes.join(', ')}`);
+    deny({
+      reason: `agent '${agent}' Write to '${rel}' violates path policy`,
+      why: `each subagent has a fixed allowlist; '${rel}' is outside it (defense-in-depth against runaway writes)`,
+      fix: `move the output under one of the allowed prefixes: ${prefixes.join(', ')}`,
+      file: rel,
+      override: 'N/A — fix the underlying issue',
+    });
   }
 
   process.exit(0);

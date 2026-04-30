@@ -6,6 +6,7 @@
 //   - body must NOT exceed 80 lines (output budget invariant).
 'use strict';
 const cap = require('./_lib/output-cap');
+const { formatBlock } = require('./_lib/gate-output');
 
 const REVIEWER_PATTERN = /^sf-design-(ceo|eng|security|qa|library)-reviewer$/;
 const BODY_MAX_LINES = 80;
@@ -20,12 +21,24 @@ const BLOCK_VERDICT_RE = /\bblock\b/i;
   if (!text) process.exit(0);
 
   if (BLOCK_VERDICT_RE.test(text)) {
-    cap.blockWith(`[harness-sf] reviewer '${agent}' is forbidden from emitting 'block' verdicts. Use 'risk: high|medium|low' and present tradeoffs only — the user decides. Revise the report.`);
+    cap.blockWith(formatBlock({
+      reason: `reviewer '${agent}' emitted a 'block' verdict (forbidden)`,
+      why: "reviewers present tradeoffs only — the user decides; 'block' subverts that contract",
+      fix: "rewrite the verdict using 'risk: high|medium|low' and present options",
+      file: `agent body (assistant transcript) — see templates/agents/${agent}.md`,
+      override: 'N/A — fix the underlying issue',
+    }));
   }
 
   const lines = cap.lineCount(text);
   if (lines > BODY_MAX_LINES) {
-    cap.blockWith(`[harness-sf] reviewer '${agent}' body is ${lines} lines (max ${BODY_MAX_LINES}). Drop lower-priority items and re-emit. Full review is preserved by the parent skill via design.md '## Reviews'.`);
+    cap.blockWith(formatBlock({
+      reason: `reviewer '${agent}' body is ${lines} lines (cap ${BODY_MAX_LINES})`,
+      why: 'output budget keeps the orchestrator from context explosion; full review is persisted by the parent skill',
+      fix: `drop lower-priority items until body ≤ ${BODY_MAX_LINES} lines; full detail goes to design.md '## Reviews'`,
+      file: `agent body (assistant transcript) — see templates/agents/${agent}.md`,
+      override: 'N/A — fix the underlying issue',
+    }));
   }
 
   process.exit(0);

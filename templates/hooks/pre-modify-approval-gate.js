@@ -16,14 +16,16 @@
 const fs = require('fs');
 const path = require('path');
 const sentinel = require('./_lib/sentinel');
+const { emitBlock } = require('./_lib/gate-output');
 
 const TTL_MS = 30 * 60 * 1000;
 const KIND = 'modify-approvals';
+const MODIFY_OVERRIDE = "HARNESS_OVERRIDE=modify with audit reason (≥8 chars; 1-hour session, 1 use)";
 
 function readStdin() { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } }
 
-function deny(msg) {
-  process.stderr.write(`[harness-sf] ${msg}\n`);
+function deny(block) {
+  emitBlock(block);
   process.exit(2);
 }
 
@@ -64,26 +66,38 @@ function inForceApp(rel) {
 
   // MODIFY mode — sentinel required.
   const key = sentinel.keyFromPath(abs);
+  const sentinelPath = `.harness-sf/.cache/${KIND}/${key}.json`;
   const s = sentinel.readSentinel(KIND, key);
   if (!s) {
-    deny(
-      `modify gate: '${rel}' exists (MODIFY mode) but no approval sentinel found.\n` +
-      `  Skill must call: node .claude/hooks/_lib/issue-modify-approval.js '${rel}'\n` +
-      `  AFTER showing diff plan and receiving explicit user approval.`
-    );
+    deny({
+      reason: `MODIFY of '${rel}' requires user approval but no sentinel was found`,
+      why: 'design-first policy: existing files are never overwritten silently — the calling skill must show diff plan + receive explicit user [Y/edit/abort]',
+      fix: `after user approves the diff plan, run: node .claude/hooks/_lib/issue-modify-approval.js '${rel}'`,
+      file: sentinelPath,
+      override: MODIFY_OVERRIDE,
+    });
   }
 
   const v = sentinel.validate(s, TTL_MS);
   if (!v.ok) {
-    deny(
-      `modify gate: approval for '${rel}' rejected — ${v.reason}.\n` +
-      `  Re-confirm with the user and re-issue via: node .claude/hooks/_lib/issue-modify-approval.js '${rel}'`
-    );
+    deny({
+      reason: `approval sentinel for '${rel}' rejected (${v.reason})`,
+      why: 'sentinel is expired, tampered, or no longer matches HEAD — approvals are bound to a specific tree state',
+      fix: `re-confirm with the user, then run: node .claude/hooks/_lib/issue-modify-approval.js '${rel}'`,
+      file: sentinelPath,
+      override: MODIFY_OVERRIDE,
+    });
   }
 
   // Path in sentinel must match (defense against key collisions or stale cache).
   if (s.path && s.path !== rel) {
-    deny(`modify gate: sentinel path mismatch (sentinel='${s.path}', requested='${rel}'). Re-issue approval.`);
+    deny({
+      reason: `sentinel path mismatch for '${rel}'`,
+      why: `sentinel encodes path='${s.path}' but the Write target is '${rel}' — defense against key collisions or stale cache`,
+      fix: `re-issue approval for the actual target: node .claude/hooks/_lib/issue-modify-approval.js '${rel}'`,
+      file: sentinelPath,
+      override: MODIFY_OVERRIDE,
+    });
   }
 
   process.exit(0);
